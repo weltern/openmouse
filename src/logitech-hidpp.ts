@@ -1,4 +1,17 @@
 import type { MouseStatus } from "./mouse-types";
+import {
+  KEY_FLAG,
+  MAPPING_FLAG,
+  type ReprogrammableControl,
+  buildDiversionClearPayload,
+  buildRemapPayload,
+  controlName,
+  parseControlInfo,
+  remappableTargets,
+  taskName,
+} from "./logitech-controls.ts";
+
+export type { ReprogrammableControl };
 
 const LOGITECH_VENDOR_ID = 0x046d;
 const HIDPP_USAGE_PAGE = 0xff00;
@@ -32,6 +45,7 @@ const FEATURE = {
   smartShiftEnhanced: 0x2111,
   hiresWheel: 0x2121,
   thumbWheel: 0x2150,
+  reprogControls: 0x1b04,
   extendedDpi: 0x2202,
   extendedReportRate: 0x8061,
   onboardProfiles: 0x8100,
@@ -558,6 +572,113 @@ export class LogitechHidppClient {
       thumbWheelInverted: (status[4] ?? 0) !== 0,
       supportsThumbWheelInvert: (capabilities & 0x01) !== 0,
     };
+  }
+
+  /**
+   * Reads every reprogrammable control, what it currently acts as, and which
+   * targets the device will accept for it.
+   *
+   * Deliberately not part of readStatus(): this is roughly two round-trips per
+   * control and the answers only change when something rewrites them, so the
+   * panel reads it on connect and again after each write rather than on the
+   * five-second refresh.
+   */
+  async readButtons(): Promise<ReprogrammableControl[]> {
+    await this.open();
+    const feature = await this.getFeature(FEATURE.reprogControls);
+    if (!feature.index) return [];
+
+    const count = (await this.request(feature.index, 0x00))[3] ?? 0;
+    const infos = [];
+    for (let index = 0; index < count; index += 1) {
+      infos.push(parseControlInfo((await this.request(feature.index, 0x10, index)).slice(3)));
+    }
+
+    const controls: ReprogrammableControl[] = [];
+    for (const info of infos) {
+      const reply = await this.request(feature.index, 0x20, info.controlId >> 8, info.controlId & 0xff);
+      // Bytes 2 and 5 of the reply are one 16-bit mapping bitfield.
+      const mappingFlags = (reply[5] ?? 0) | ((reply[8] ?? 0) << 8);
+      controls.push({
+        ...info,
+        name: controlName(info.controlId),
+        taskName: taskName(info.taskId),
+        reprogrammable: (info.flags & KEY_FLAG.reprogrammable) !== 0,
+        mappedTo: ((reply[6] ?? 0) << 8) | (reply[7] ?? 0),
+        diverted: (mappingFlags & (MAPPING_FLAG.diverted | MAPPING_FLAG.persistentlyDiverted)) !== 0,
+        remappableTo: remappableTargets(info, infos),
+      });
+    }
+    return controls;
+  }
+
+  /**
+   * Points one control at another. Only targets the device itself advertises
+   * are accepted, so the primary buttons — which report an empty group mask —
+   * cannot be moved, and no diversion flag is ever touched.
+   */
+  async setButtonMapping(controlId: number, targetControlId: number): Promise<ReprogrammableControl[]> {
+    const feature = await this.getFeature(FEATURE.reprogControls);
+    if (!feature.index) {
+      throw new Error("This mouse does not expose reprogrammable controls.");
+    }
+
+    const before = await this.readButtons();
+    const control = before.find((candidate) => candidate.controlId === controlId);
+    if (!control) {
+      throw new Error("That control is not present on this mouse.");
+    }
+    if (!control.reprogrammable || !control.remappableTo.includes(targetControlId)) {
+      throw new Error(`${control.name} cannot be remapped to ${controlName(targetControlId)}.`);
+    }
+
+    await this.requestLong(feature.index, 0x30, buildRemapPayload(controlId, targetControlId));
+
+    const after = await this.readButtons();
+    const confirmed = after.find((candidate) => candidate.controlId === controlId);
+    if (confirmed?.mappedTo !== targetControlId) {
+      throw new Error(
+        `The mouse kept ${control.name} pointing at ${controlName(confirmed?.mappedTo ?? 0)}.`,
+      );
+    }
+    return after;
+  }
+
+  /**
+   * Hands every diverted button back to the hardware.
+   *
+   * A vendor application diverts buttons so it can implement its own actions.
+   * If it exits without cleaning up — or is killed — the diversion persists in
+   * the device and those buttons stop doing anything. This restores them to
+   * their native or remapped behaviour without changing any mapping.
+   */
+  async clearButtonDiversion(): Promise<ReprogrammableControl[]> {
+    const feature = await this.getFeature(FEATURE.reprogControls);
+    if (!feature.index) {
+      throw new Error("This mouse does not expose reprogrammable controls.");
+    }
+
+    const before = await this.readButtons();
+    const diverted = before.filter((control) => control.diverted);
+    if (!diverted.length) return before;
+
+    for (const control of diverted) {
+      await this.requestLong(feature.index, 0x30, buildDiversionClearPayload(control.controlId));
+    }
+
+    const after = await this.readButtons();
+    const stuck = after.filter((control) => control.diverted);
+    if (stuck.length) {
+      throw new Error(`The mouse kept ${stuck.map((control) => control.name).join(", ")} diverted.`);
+    }
+    // A cleared diversion must not have disturbed where a button points.
+    for (const control of before) {
+      const now = after.find((candidate) => candidate.controlId === control.controlId);
+      if (now && now.mappedTo !== control.mappedTo) {
+        throw new Error(`Restoring ${control.name} unexpectedly changed what it does.`);
+      }
+    }
+    return after;
   }
 
   /** Switches the wheel between free-spinning and ratcheted, preserving SmartShift. */

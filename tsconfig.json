@@ -5,7 +5,11 @@
     "module": "ESNext",
     "lib": ["ES2022", "DOM", "DOM.Iterable"],
     "moduleResolution": "Bundler",
-    "allowImportingTsExtensions": false,
+    // Vite resolves extensionless imports; Node's ESM loader, which runs the
+    // test suite directly against these sources, does not. Allowing the
+    // explicit extension is what lets a module that imports another module be
+    // unit-tested at all. Safe under noEmit — nothing is written out.
+    "allowImportingTsExtensions": true,
     "verbatimModuleSyntax": true,
     "noEmit": true,
     "strict": true,

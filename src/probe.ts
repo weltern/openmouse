@@ -444,6 +444,136 @@ async function dumpWheelFeatures(device: HIDDevice): Promise<void> {
   }
 }
 
+/** 0x1B04 control ids, from Solaar's special_keys table. */
+const CONTROL_NAMES: Record<number, string> = {
+  0x0050: "Left Button",
+  0x0051: "Right Button",
+  0x0052: "Middle Button",
+  0x0053: "Back Button",
+  0x0054: "Back",
+  0x0056: "Forward Button",
+  0x0057: "Forward (as HID)",
+  0x0059: "Button 6",
+  0x005a: "Button 7",
+  0x005b: "Button 8",
+  0x005c: "Button 9",
+  0x005d: "Button 10",
+  0x005e: "Button 11",
+  0x00c3: "Mouse Gesture Button",
+  0x00c4: "SmartShift",
+  0x00d7: "Virtual Gesture Button",
+  0x00dc: "Back Button Long Press",
+  0x00e0: "Mission Control / Task View",
+  0x00e1: "Dashboard / Action Center",
+  0x00e2: "Backlight Down",
+  0x00e3: "Backlight Up",
+  0x00e4: "Previous Track",
+  0x00e5: "Play / Pause",
+  0x00e6: "Next Track",
+  0x00e7: "Mute",
+  0x00e8: "Volume Down",
+  0x00e9: "Volume Up",
+};
+
+const controlName = (cid: number): string => CONTROL_NAMES[cid] ?? `(unknown 0x${hex(cid, 4)})`;
+
+/** Tentative — printed beside the raw byte so the two can be checked. */
+const KEY_FLAGS: ReadonlyArray<[number, string]> = [
+  [0x01, "mouse-button"], [0x02, "fkey"], [0x04, "hotkey"], [0x08, "fn-toggle"],
+  [0x10, "reprogrammable"], [0x20, "divertable"], [0x40, "persist-divertable"], [0x80, "virtual"],
+];
+
+const MAPPING_FLAGS: ReadonlyArray<[number, string]> = [
+  [0x01, "diverted"], [0x04, "persistently-diverted"], [0x10, "raw-xy"], [0x40, "force-raw-xy"],
+];
+
+const decodeFlags = (value: number, table: ReadonlyArray<[number, string]>): string =>
+  table.filter(([bit]) => (value & bit) !== 0).map(([, name]) => name).join(",") || "none";
+
+/**
+ * Read-only dump of 0x1B04 REPROG CONTROLS V4: every control, what it natively
+ * does, whether it may be remapped, which groups it may be remapped into, and
+ * where it currently points. No writes — remapping persists in the device, so
+ * nothing is sent until the layout is confirmed.
+ */
+async function dumpButtons(device: HIDDevice): Promise<void> {
+  describeDevice(device);
+  const bus = new Transceiver(device);
+  await bus.open();
+
+  try {
+    const deviceIndex = await findLiveIndex(bus);
+    if (deviceIndex === null) {
+      log("  no live device index — wake the mouse and retry.");
+      return;
+    }
+    log(`  using device index 0x${hex(deviceIndex)}`);
+
+    const featureIndex = await getFeatureIndex(bus, deviceIndex, 0x1b04);
+    if (!featureIndex) {
+      log("  0x1B04 REPROG CONTROLS V4 not implemented by this device.");
+      return;
+    }
+
+    const count = (await bus.request(deviceIndex, featureIndex, 0x0))[3] ?? 0;
+    log(`  ${count} reprogrammable controls`);
+    log("");
+
+    const controls: Array<{ cid: number; group: number; gmask: number }> = [];
+    for (let index = 0; index < count; index += 1) {
+      const info = await bus.request(deviceIndex, featureIndex, 0x1, [index]);
+      const cid = ((info[3] ?? 0) << 8) | (info[4] ?? 0);
+      const taskId = ((info[5] ?? 0) << 8) | (info[6] ?? 0);
+      const flags1 = info[7] ?? 0;
+      const pos = info[8] ?? 0;
+      const group = info[9] ?? 0;
+      const gmask = info[10] ?? 0;
+      const flags2 = info[11] ?? 0;
+      controls.push({ cid, group, gmask });
+
+      log(`  [${index}] cid 0x${hex(cid, 4)} ${controlName(cid)}`);
+      log(`       raw: ${hexBytes(info.slice(3, 12))}`);
+      log(`       task 0x${hex(taskId, 4)} (${controlName(taskId)})  pos=${pos} group=${group} gmask=0b${gmask.toString(2).padStart(8, "0")}`);
+      log(`       flags1=0x${hex(flags1)} → ${decodeFlags(flags1, KEY_FLAGS)}   flags2=0x${hex(flags2)}`);
+    }
+
+    log("");
+    log("  Current reporting:");
+    for (const { cid, gmask } of controls) {
+      try {
+        const reply = await bus.request(deviceIndex, featureIndex, 0x2, [cid >> 8, cid & 0xff]);
+        const mappingFlags = (reply[5] ?? 0) | ((reply[8] ?? 0) << 8);
+        const mappedTo = ((reply[6] ?? 0) << 8) | (reply[7] ?? 0);
+        log(`    0x${hex(cid, 4)} ${controlName(cid).padEnd(28)} raw: ${hexBytes(reply.slice(3, 12))}`);
+        log(`           → mapped to 0x${hex(mappedTo, 4)} ${controlName(mappedTo)}, flags ${decodeFlags(mappingFlags, MAPPING_FLAGS)}`);
+      } catch (error) {
+        log(`    0x${hex(cid, 4)} failed: ${error instanceof Error ? error.message : String(error)}`);
+      }
+      void gmask;
+    }
+
+    log("");
+    log("  Remap targets each control allows (from its gmask):");
+    const groupMembers = new Map<number, number[]>();
+    for (const { cid, group } of controls) {
+      if (!groupMembers.has(group)) groupMembers.set(group, []);
+      groupMembers.get(group)!.push(cid);
+    }
+    for (const { cid, gmask } of controls) {
+      const targets: number[] = [];
+      for (let group = 1; group <= 8; group += 1) {
+        if ((gmask & (1 << (group - 1))) !== 0) targets.push(...(groupMembers.get(group) ?? []));
+      }
+      log(`    0x${hex(cid, 4)} ${controlName(cid).padEnd(28)} ${targets.length ? targets.map((target) => controlName(target)).join(", ") : "not remappable"}`);
+    }
+
+    log("");
+    log("Done.");
+  } finally {
+    await bus.close();
+  }
+}
+
 async function pick(filters: HIDDeviceFilter[]): Promise<void> {
   if (!navigator.hid) {
     log("WebHID is unavailable. Use Chrome or Edge on desktop over http://localhost.");
@@ -491,6 +621,20 @@ document.querySelector("#wheel")!.addEventListener("click", () => {
       return;
     }
     await dumpWheelFeatures(device);
+  })().catch((error) => log(`Error: ${error}`));
+});
+
+document.querySelector("#buttons")!.addEventListener("click", () => {
+  void (async () => {
+    if (!navigator.hid) return;
+    const devices = await navigator.hid.getDevices();
+    const device = devices.find(hasHidppCollection);
+    resetLog();
+    if (!device) {
+      log("No authorized HID++ device yet — use “Pick a Logitech HID++ device” first.");
+      return;
+    }
+    await dumpButtons(device);
   })().catch((error) => log(`Error: ${error}`));
 });
 
