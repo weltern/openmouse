@@ -98,6 +98,18 @@ export class LogitechHidppClient {
   private readonly featureCache = new Map<number, FeatureInfo>();
   private supportsInvertScrollCache: boolean | null = null;
   private smartShiftRangeCache: { min: number; max: number } | null | undefined = undefined;
+  /**
+   * Values that cannot change while a connection is open. Re-reading these on
+   * every five-second refresh was costing about seven round-trips of radio
+   * traffic to learn nothing. Battery, DPI, polling rate, profile and wheel
+   * state are deliberately absent — those do change, and caching them would
+   * freeze the display.
+   */
+  private nameCache: string | null = null;
+  private identityCache: DeviceIdentity | null = null;
+  private firmwareCache: string[] | null = null;
+  private supportsSeparateDpiAxesCache: boolean | null = null;
+  private supportedPollingRatesCache: number[] | null = null;
   private readonly rateChangeWaiters: Array<{ rate: number; resolve: () => void; reject: (reason: Error) => void }> = [];
   private readonly onInputReport = (event: HIDInputReportEvent): void => {
     if (event.reportId !== SHORT_REPORT_ID && event.reportId !== LONG_REPORT_ID) {
@@ -143,7 +155,13 @@ export class LogitechHidppClient {
     reject: (reason: Error) => void;
   }> = [];
 
-  constructor(readonly device: HIDDevice) {}
+  readonly device: HIDDevice;
+
+  // A plain assignment rather than a parameter property: Node's strip-only
+  // TypeScript mode rejects those, and `npm test` loads this file directly.
+  constructor(device: HIDDevice) {
+    this.device = device;
+  }
 
   /**
    * Any Logitech device exposing the HID++ vendor collection qualifies: the
@@ -201,8 +219,8 @@ export class LogitechHidppClient {
 
     // HID++ receivers expect one request at a time. Keeping the sequence serial
     // also makes every input report unambiguous to the WebHID event handler.
-    const name = await this.readName(nameFeature.index);
-    const identity = await this.readIdentity(firmwareFeature.index);
+    const name = this.nameCache ?? (this.nameCache = await this.readName(nameFeature.index));
+    const identity = this.identityCache ?? (this.identityCache = await this.readIdentity(firmwareFeature.index));
     const battery = batteryFeature.index
       ? await this.readBattery(batteryFeature.index)
       : batteryVoltageFeature.index
@@ -216,8 +234,10 @@ export class LogitechHidppClient {
       battery.voltageMv = (await this.readAdcMeasurement(adcMeasurementFeature.index)).voltageMv;
     }
     const dpiState = await this.readDpi();
-    const supportsSeparateDpiAxes = await this.readDpiCapabilities();
-    const supportedPollingRates = await this.readSupportedPollingRates(reportRateFeature.index);
+    const supportsSeparateDpiAxes = this.supportsSeparateDpiAxesCache
+      ?? (this.supportsSeparateDpiAxesCache = await this.readDpiCapabilities());
+    const supportedPollingRates = this.supportedPollingRatesCache
+      ?? (this.supportedPollingRatesCache = await this.readSupportedPollingRates(reportRateFeature.index));
     // Productivity mice run at a fixed report rate and expose no rate feature;
     // a null here tells the panel to hide the card rather than invent a number.
     const pollingRateHz = reportRateFeature.index
@@ -225,7 +245,7 @@ export class LogitechHidppClient {
       : null;
     const profileState = await this.readProfileState(profilesFeature.index);
     const wheel = await this.readWheelState();
-    const firmware = await this.readFirmware(firmwareFeature.index);
+    const firmware = this.firmwareCache ?? (this.firmwareCache = await this.readFirmware(firmwareFeature.index));
 
     return {
       brand: "Logitech",
@@ -272,6 +292,12 @@ export class LogitechHidppClient {
     this.featureCache.clear();
     this.dpiOptionsCache = null;
     this.supportsInvertScrollCache = null;
+    this.smartShiftRangeCache = undefined;
+    this.nameCache = null;
+    this.identityCache = null;
+    this.firmwareCache = null;
+    this.supportsSeparateDpiAxesCache = null;
+    this.supportedPollingRatesCache = null;
     if (this.device.opened) {
       await this.device.close();
     }
@@ -821,7 +847,7 @@ export class LogitechHidppClient {
 
   private waitForRateChange(rate: number): Promise<void> {
     return new Promise<void>((resolve, reject) => {
-      const timeout = window.setTimeout(() => {
+      const timeout = setTimeout(() => {
         const index = this.rateChangeWaiters.findIndex((waiter) => waiter.reject === reject);
         if (index >= 0) this.rateChangeWaiters.splice(index, 1);
         reject(new Error("The mouse acknowledged the rate write but did not confirm the new active rate."));
@@ -829,7 +855,7 @@ export class LogitechHidppClient {
       this.rateChangeWaiters.push({
         rate,
         resolve: () => {
-          window.clearTimeout(timeout);
+          clearTimeout(timeout);
           resolve();
         },
         reject,
@@ -949,7 +975,7 @@ export class LogitechHidppClient {
 
   private waitForResponse(featureIndex: number, functionByte: number, timeoutMs = 6000): Promise<Uint8Array> {
     return new Promise<Uint8Array>((resolve, reject) => {
-      const timeout = window.setTimeout(() => {
+      const timeout = setTimeout(() => {
         const index = this.waiters.findIndex((waiter) => waiter.reject === reject);
         if (index >= 0) {
           this.waiters.splice(index, 1);
@@ -961,7 +987,7 @@ export class LogitechHidppClient {
         featureIndex,
         functionByte,
         resolve: (report) => {
-          window.clearTimeout(timeout);
+          clearTimeout(timeout);
           resolve(report);
         },
         reject,
