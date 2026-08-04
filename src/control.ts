@@ -307,7 +307,7 @@ function renderControl(): void {
           <article class="setting-card"><div class="setting-heading"><div><p>POLLING RATE</p><h2>Report frequency</h2></div></div><div class="segmented rate-options"><button data-rate="125" disabled>125</button><button data-rate="250" disabled>250</button><button data-rate="500" disabled>500</button><button data-rate="1000" disabled>1K</button><button data-rate="2000" disabled>2K</button><button data-rate="4000" disabled>4K</button><button data-rate="8000" disabled>8K</button></div><small id="polling-note" class="setting-note">Higher rates update cursor movement more often, but use more battery.</small></article>
           <article class="setting-card"><div class="setting-heading"><div><p>SENSOR</p><h2>Lift-off distance</h2></div></div><div id="generic-lod-options" class="segmented three"><button data-lod="Low" disabled>0.7 mm</button><button data-lod="Medium" disabled>1 mm</button><button data-lod="High" disabled>2 mm</button></div><select id="egg-lod-select" hidden style="width:100%;padding:.48rem;border:1px solid #343438;border-radius:6px;background:#171719;color:#eee"></select><small class="setting-note">Controls how far you can lift the mouse before tracking stops. Higher values keep tracking a little longer.</small></article>
           <article id="wheel-settings" class="setting-card" style="display:none"><div class="setting-heading"><div><p>SCROLL WHEEL</p><h2>Ratchet &amp; scrolling</h2></div><output id="wheel-ratchet-state" style="color:#8b8b90;font-size:.6rem">—</output></div><div id="wheel-mode-options" class="segmented"><button data-wheelmode="Freespin" disabled>Free-spin</button><button data-wheelmode="Ratchet" disabled>Ratchet</button></div><div id="smartshift-row" style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>SmartShift</span><button id="smartshift-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><label id="smartshift-threshold-row" style="display:block;color:#77777c;font-size:.6rem">Threshold <output id="smartshift-threshold-value">—</output><input id="smartshift-threshold" type="range" min="10" max="75" step="1" disabled style="width:100%;margin-top:.25rem" /></label><small class="setting-note" style="margin-top:.1rem">Lower releases the ratchet on a gentler flick.</small></div><div style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>High-resolution scrolling</span><button id="hires-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="invert-scroll-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert scroll direction</span><button id="invert-scroll-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="thumbwheel-invert-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert thumb wheel</span><button id="thumbwheel-invert-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div></div></article>
-          <article id="button-settings" class="setting-card" style="display:none;grid-column:1/-1"><div class="setting-heading"><div><p>BUTTONS</p><h2>Remapping</h2></div></div><div id="button-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:.55rem"></div><button id="reclaim-buttons" type="button" hidden style="margin-top:.6rem;padding:.45rem .7rem;border:1px solid #5c4a2a;border-radius:6px;background:#241f16;color:#e2c489;font-size:.64rem">Restore buttons to hardware control</button><small id="button-note" class="setting-note">Each button can be made to act as another button on this mouse.</small></article>
+          <article id="button-settings" class="setting-card" style="display:none;grid-column:1/-1"><div class="setting-heading"><div><p>BUTTONS</p><h2>Remapping</h2></div></div><div id="button-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:.55rem"></div><div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.6rem"><button id="refresh-buttons" type="button" style="padding:.45rem .7rem;border:1px solid #3a3a41;border-radius:6px;background:#1c1c20;color:#d8d8dc;font-size:.64rem">Re-read from mouse</button><button id="reclaim-buttons" type="button" hidden style="padding:.45rem .7rem;border:1px solid #5c4a2a;border-radius:6px;background:#241f16;color:#e2c489;font-size:.64rem">Restore buttons to hardware control</button></div><small id="button-note" class="setting-note">Each button can be made to act as another button on this mouse.</small></article>
         </section>
         <section id="logitech-device-details" class="device-data" style="display:none;margin-top:.65rem">
           <details class="egg-collapsible"><summary><span><small>LOGITECH HID++</small>Device details</span><i aria-hidden="true"></i></summary><div class="egg-collapsible-body"><article class="setting-card" style="min-height:0"><div id="logitech-detail-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.55rem"></div></article></div></details>
@@ -396,6 +396,10 @@ function renderControl(): void {
 
   document.querySelector<HTMLButtonElement>("#reclaim-buttons")?.addEventListener("click", () => {
     void reclaimButtons();
+  });
+
+  document.querySelector<HTMLButtonElement>("#refresh-buttons")?.addEventListener("click", () => {
+    void refreshButtons();
   });
 
   document.querySelector<HTMLButtonElement>("#smartshift-toggle")?.addEventListener("click", (event) => {
@@ -982,9 +986,13 @@ function renderButtons(controls: ReprogrammableControl[]): void {
     reclaim.disabled = settingInProgress;
     reclaim.textContent = `Restore ${divertedCount} button${divertedCount === 1 ? "" : "s"} to hardware control`;
   }
+  const refresh = document.querySelector<HTMLButtonElement>("#refresh-buttons");
+  if (refresh) refresh.disabled = settingInProgress;
+  // Reading the button table costs far more than a status poll, so it is not
+  // on the five-second refresh. Say so, rather than letting the card look live.
   setText("#button-note", divertedCount
     ? "Buttons held by another app stay diverted even after it closes, which leaves them doing nothing. Restoring hands them back to the mouse."
-    : "Each button can be made to act as another button on this mouse.");
+    : "Each button can be made to act as another button on this mouse. This card is read when you connect and after each change — use Re-read to check the mouse now.");
 
   list.replaceChildren(...remappable.map((control) => {
     const row = document.createElement("label");
@@ -1645,8 +1653,48 @@ async function applyWheelSetting(label: string, write: (client: LogitechHidppCli
   }
 }
 
+/**
+ * Waits for a background status poll to finish instead of dropping the click.
+ * The poll runs every five seconds and takes real time over the air, so a
+ * plain `if (refreshInProgress) return` guard silently swallows a fair share
+ * of button presses with no feedback at all.
+ */
+async function waitForIdle(timeoutMs = 4000): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  while (refreshInProgress && Date.now() < deadline) {
+    await new Promise((resolve) => setTimeout(resolve, 60));
+  }
+  return !refreshInProgress;
+}
+
+/** Re-reads the button table from the mouse, so the card can show live state. */
+async function refreshButtons(): Promise<void> {
+  if (!activeClient || settingInProgress) return;
+  const client = activeClient;
+  if (!await waitForIdle()) {
+    setText("#read-status", "The mouse is busy; try again in a moment.");
+    return;
+  }
+  settingInProgress = true;
+  setText("#read-status", "Reading buttons from the mouse…");
+  let controls: ReprogrammableControl[] | null = null;
+  try {
+    controls = await client.readButtons();
+    setText("#read-status", "Buttons read from the mouse");
+  } catch (error) {
+    setText("#read-status", error instanceof Error ? error.message : "Unable to read the buttons.");
+  } finally {
+    settingInProgress = false;
+    if (controls) renderButtons(controls);
+  }
+}
+
 async function reclaimButtons(): Promise<void> {
-  if (!activeClient || refreshInProgress || settingInProgress) return;
+  if (!activeClient || settingInProgress) return;
+  if (!await waitForIdle()) {
+    setText("#read-status", "The mouse is busy; try again in a moment.");
+    return;
+  }
   const client = activeClient;
   settingInProgress = true;
   setText("#read-status", "Restoring buttons to hardware control…");
@@ -1666,7 +1714,11 @@ async function reclaimButtons(): Promise<void> {
 }
 
 async function applyButtonMapping(controlId: number, targetControlId: number): Promise<void> {
-  if (!activeClient || refreshInProgress || settingInProgress) return;
+  if (!activeClient || settingInProgress) return;
+  if (!await waitForIdle()) {
+    setText("#read-status", "The mouse is busy; try again in a moment.");
+    return;
+  }
   const client = activeClient;
   settingInProgress = true;
   setText("#read-status", `Remapping ${controlName(controlId)} to ${controlName(targetControlId)}…`);

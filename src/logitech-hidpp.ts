@@ -2,6 +2,7 @@ import type { MouseStatus } from "./mouse-types";
 import {
   KEY_FLAG,
   MAPPING_FLAG,
+  type ControlInfo,
   type ReprogrammableControl,
   buildDiversionClearPayload,
   buildRemapPayload,
@@ -124,6 +125,7 @@ export class LogitechHidppClient {
   private firmwareCache: string[] | null = null;
   private supportsSeparateDpiAxesCache: boolean | null = null;
   private supportedPollingRatesCache: number[] | null = null;
+  private controlInfoCache: ControlInfo[] | null = null;
   private readonly rateChangeWaiters: Array<{ rate: number; resolve: () => void; reject: (reason: Error) => void }> = [];
   private readonly onInputReport = (event: HIDInputReportEvent): void => {
     if (event.reportId !== SHORT_REPORT_ID && event.reportId !== LONG_REPORT_ID) {
@@ -312,6 +314,7 @@ export class LogitechHidppClient {
     this.firmwareCache = null;
     this.supportsSeparateDpiAxesCache = null;
     this.supportedPollingRatesCache = null;
+    this.controlInfoCache = null;
     if (this.device.opened) {
       await this.device.close();
     }
@@ -588,11 +591,18 @@ export class LogitechHidppClient {
     const feature = await this.getFeature(FEATURE.reprogControls);
     if (!feature.index) return [];
 
-    const count = (await this.request(feature.index, 0x00))[3] ?? 0;
-    const infos = [];
-    for (let index = 0; index < count; index += 1) {
-      infos.push(parseControlInfo((await this.request(feature.index, 0x10, index)).slice(3)));
+    // The control table itself never changes; only the reporting does. Caching
+    // it halves a re-read, which matters because this is the most expensive
+    // thing the panel asks of the mouse.
+    if (!this.controlInfoCache) {
+      const count = (await this.request(feature.index, 0x00))[3] ?? 0;
+      const infos = [];
+      for (let index = 0; index < count; index += 1) {
+        infos.push(parseControlInfo((await this.request(feature.index, 0x10, index)).slice(3)));
+      }
+      this.controlInfoCache = infos;
     }
+    const infos = this.controlInfoCache;
 
     const controls: ReprogrammableControl[] = [];
     for (const info of infos) {
