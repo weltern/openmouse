@@ -305,6 +305,7 @@ function renderControl(): void {
           <article class="setting-card dpi-card"><div class="setting-heading"><div><p>DPI</p><h2>Sensitivity</h2></div><div class="dpi-header-actions"><input id="dpi-output" type="text" inputmode="numeric" value="— DPI" aria-label="DPI value" readonly /><button id="custom-dpi" type="button" disabled>Custom</button></div></div><div id="dpi-presets" class="segmented dpi-presets" aria-label="Common DPI values"></div><div id="logitech-axis-controls" style="display:none;margin-top:.6rem;padding-top:.6rem;border-top:1px solid #29292d"><div style="display:grid;grid-template-columns:1fr 1fr auto;gap:.45rem;align-items:end"><label style="color:#77777c;font-size:.6rem">X axis<input id="logitech-dpi-x" type="number" min="100" step="50" style="width:100%;box-sizing:border-box;margin-top:.2rem;padding:.42rem;border:1px solid #343438;border-radius:6px;background:#171719;color:#eee" /></label><label style="color:#77777c;font-size:.6rem">Y axis<input id="logitech-dpi-y" type="number" min="100" step="50" style="width:100%;box-sizing:border-box;margin-top:.2rem;padding:.42rem;border:1px solid #343438;border-radius:6px;background:#171719;color:#eee" /></label><button id="apply-logitech-axes" type="button" style="padding:.45rem .6rem;border:1px solid #45454a;border-radius:6px;background:#202023;color:#ececef;font-size:.62rem">Apply</button></div></div><div class="setting-action"><span id="dpi-pending">Choose a DPI value</span></div></article>
           <article class="setting-card"><div class="setting-heading"><div><p>POLLING RATE</p><h2>Report frequency</h2></div></div><div class="segmented rate-options"><button data-rate="125" disabled>125</button><button data-rate="250" disabled>250</button><button data-rate="500" disabled>500</button><button data-rate="1000" disabled>1K</button><button data-rate="2000" disabled>2K</button><button data-rate="4000" disabled>4K</button><button data-rate="8000" disabled>8K</button></div><small id="polling-note" class="setting-note">Higher rates update cursor movement more often, but use more battery.</small></article>
           <article class="setting-card"><div class="setting-heading"><div><p>SENSOR</p><h2>Lift-off distance</h2></div></div><div id="generic-lod-options" class="segmented three"><button data-lod="Low" disabled>0.7 mm</button><button data-lod="Medium" disabled>1 mm</button><button data-lod="High" disabled>2 mm</button></div><select id="egg-lod-select" hidden style="width:100%;padding:.48rem;border:1px solid #343438;border-radius:6px;background:#171719;color:#eee"></select><small class="setting-note">Controls how far you can lift the mouse before tracking stops. Higher values keep tracking a little longer.</small></article>
+          <article id="wheel-settings" class="setting-card" style="display:none"><div class="setting-heading"><div><p>SCROLL WHEEL</p><h2>Ratchet &amp; scrolling</h2></div><output id="wheel-ratchet-state" style="color:#8b8b90;font-size:.6rem">—</output></div><div id="wheel-mode-options" class="segmented"><button data-wheelmode="Freespin" disabled>Free-spin</button><button data-wheelmode="Ratchet" disabled>Ratchet</button></div><div id="smartshift-row" style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>SmartShift</span><button id="smartshift-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><label id="smartshift-threshold-row" style="display:block;color:#77777c;font-size:.6rem">Threshold <output id="smartshift-threshold-value">—</output><input id="smartshift-threshold" type="range" min="10" max="75" step="1" disabled style="width:100%;margin-top:.25rem" /></label><small class="setting-note" style="margin-top:.1rem">Lower releases the ratchet on a gentler flick.</small></div><div style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>High-resolution scrolling</span><button id="hires-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="invert-scroll-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert scroll direction</span><button id="invert-scroll-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="thumbwheel-invert-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert thumb wheel</span><button id="thumbwheel-invert-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div></div></article>
         </section>
         <section id="logitech-device-details" class="device-data" style="display:none;margin-top:.65rem">
           <details class="egg-collapsible"><summary><span><small>LOGITECH HID++</small>Device details</span><i aria-hidden="true"></i></summary><div class="egg-collapsible-body"><article class="setting-card" style="min-height:0"><div id="logitech-detail-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(150px,1fr));gap:.55rem"></div></article></div></details>
@@ -381,6 +382,48 @@ function renderControl(): void {
   });
   document.querySelector<HTMLButtonElement>("#apply-logitech-axes")?.addEventListener("click", () => {
     void applyLogitechAxisDpi();
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-wheelmode]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const mode = button.dataset.wheelmode === "Freespin" ? "Freespin" : "Ratchet";
+      void applyWheelSetting(`Switching the wheel to ${mode === "Freespin" ? "free-spin" : "ratchet"}`,
+        (client) => client.setWheelMode(mode));
+    });
+  });
+
+  document.querySelector<HTMLButtonElement>("#smartshift-toggle")?.addEventListener("click", (event) => {
+    const enabled = (event.currentTarget as HTMLButtonElement).getAttribute("aria-checked") !== "true";
+    const slider = document.querySelector<HTMLInputElement>("#smartshift-threshold");
+    // Re-enabling restores whatever the slider is showing, which is the last
+    // value the mouse reported rather than an invented default.
+    const threshold = enabled ? Number(slider?.value ?? 0) || null : null;
+    void applyWheelSetting(`${enabled ? "Enabling" : "Disabling"} SmartShift`,
+      (client) => client.setSmartShiftThreshold(threshold));
+  });
+
+  document.querySelector<HTMLInputElement>("#smartshift-threshold")?.addEventListener("change", (event) => {
+    const threshold = Number((event.currentTarget as HTMLInputElement).value);
+    void applyWheelSetting(`Setting the SmartShift threshold to ${threshold}`,
+      (client) => client.setSmartShiftThreshold(threshold));
+  });
+
+  document.querySelector<HTMLButtonElement>("#thumbwheel-invert-toggle")?.addEventListener("click", (event) => {
+    const enabled = (event.currentTarget as HTMLButtonElement).getAttribute("aria-checked") !== "true";
+    void applyWheelSetting(`${enabled ? "Inverting" : "Restoring"} the thumb wheel`,
+      (client) => client.setThumbWheelInverted(enabled));
+  });
+
+  document.querySelector<HTMLButtonElement>("#hires-toggle")?.addEventListener("click", (event) => {
+    const enabled = (event.currentTarget as HTMLButtonElement).getAttribute("aria-checked") !== "true";
+    void applyWheelSetting(`${enabled ? "Enabling" : "Disabling"} high-resolution scrolling`,
+      (client) => client.setHiResScroll(enabled));
+  });
+
+  document.querySelector<HTMLButtonElement>("#invert-scroll-toggle")?.addEventListener("click", (event) => {
+    const enabled = (event.currentTarget as HTMLButtonElement).getAttribute("aria-checked") !== "true";
+    void applyWheelSetting(`${enabled ? "Inverting" : "Restoring"} scroll direction`,
+      (client) => client.setInvertScroll(enabled));
   });
   document.querySelector<HTMLInputElement>("#dpi-output")?.addEventListener("keydown", (event) => {
     if (event.key === "Enter") {
@@ -686,8 +729,17 @@ function showStatus(status: MouseStatus): void {
       : "Higher rates update cursor movement more often, but use more battery."));
   const pollingCard = document.querySelector<HTMLElement>("[data-rate]")?.closest<HTMLElement>(".setting-card");
   if (pollingCard) {
-    pollingCard.hidden = false;
-    pollingCard.style.display = "";
+    // A device with no report-rate feature gets no card, rather than a row of
+    // buttons that are all hidden and a rate that was never read.
+    const hidePolling = ui?.hidePollingCard === true;
+    pollingCard.hidden = hidePolling;
+    pollingCard.style.display = hidePolling ? "none" : "";
+  }
+  const lodCard = document.querySelector<HTMLElement>("[data-lod]")?.closest<HTMLElement>(".setting-card");
+  if (lodCard) {
+    const hideLod = ui?.hideLodCard === true;
+    lodCard.hidden = hideLod;
+    lodCard.style.display = hideLod ? "none" : "";
   }
   for (const selector of ["#signal-settings", "#sleep-settings"]) {
     const element = document.querySelector<HTMLElement>(selector);
@@ -843,7 +895,9 @@ function showStatus(status: MouseStatus): void {
       ? "Connected"
       : `Battery ${status.batteryPercent}%`);
   } else {
-    setText("#read-status", `Current: ${status.dpi.toLocaleString()} DPI · ${status.pollingRateHz.toLocaleString()} Hz`);
+    setText("#read-status", status.pollingRateHz === null
+      ? `Current: ${status.dpi.toLocaleString()} DPI`
+      : `Current: ${status.dpi.toLocaleString()} DPI · ${status.pollingRateHz.toLocaleString()} Hz`);
   }
   const meter = document.querySelector<HTMLElement>("#battery-meter");
   if (meter) meter.style.width = status.batteryPercent === null ? "0%" : `${status.batteryPercent}%`;
@@ -894,9 +948,71 @@ function showStatus(status: MouseStatus): void {
   const dpiY = document.querySelector<HTMLInputElement>("#logitech-dpi-y");
   if (dpiX) dpiX.value = String(status.dpi);
   if (dpiY) dpiY.value = String(status.dpiY ?? status.dpi);
+  renderWheelSettings(status, settingsPending);
   const logitechDetails = document.querySelector<HTMLElement>("#logitech-device-details");
   if (logitechDetails) logitechDetails.style.display = status.brand === "Logitech" ? "block" : "none";
   if (status.brand === "Logitech") renderLogitechDetails(status);
+}
+
+/** Scroll-wheel card; shown only for devices that reported wheel capabilities. */
+function renderWheelSettings(status: MouseStatus, settingsPending: boolean): void {
+  const card = document.querySelector<HTMLElement>("#wheel-settings");
+  if (!card) return;
+
+  const hasWheelControls = status.wheelMode != null || status.hiResScroll != null;
+  card.style.display = hasWheelControls ? "" : "none";
+  if (!hasWheelControls) return;
+
+  document.querySelectorAll<HTMLButtonElement>("[data-wheelmode]").forEach((button) => {
+    button.classList.toggle("selected", button.dataset.wheelmode === status.wheelMode);
+    button.hidden = status.wheelMode == null;
+    button.disabled = settingsPending || status.wheelMode == null;
+  });
+
+  const setToggle = (selector: string, value: boolean | null | undefined, supported: boolean): void => {
+    const button = document.querySelector<HTMLButtonElement>(selector);
+    if (!button) return;
+    const on = value === true;
+    button.setAttribute("aria-checked", String(on));
+    button.textContent = on ? "On" : "Off";
+    button.style.color = on ? "#8be3a9" : "#8b8b90";
+    button.style.borderColor = on ? "rgb(105 210 141 / 45%)" : "#3a3a3f";
+    button.disabled = settingsPending || !supported;
+  };
+  setToggle("#hires-toggle", status.hiResScroll, status.hiResScroll != null);
+  setToggle("#invert-scroll-toggle", status.invertScroll, status.supportsInvertScroll === true);
+  setToggle("#thumbwheel-invert-toggle", status.thumbWheelInverted, status.supportsThumbWheelInvert === true);
+
+  const invertRow = document.querySelector<HTMLElement>("#invert-scroll-row");
+  if (invertRow) invertRow.hidden = status.supportsInvertScroll !== true;
+  const thumbRow = document.querySelector<HTMLElement>("#thumbwheel-invert-row");
+  if (thumbRow) thumbRow.hidden = status.supportsThumbWheelInvert !== true;
+
+  // 255 means SmartShift is off; any other value is both "on" and the setting.
+  const threshold = status.smartShiftThreshold;
+  const smartShiftOn = threshold != null && threshold !== 255;
+  const smartShiftRow = document.querySelector<HTMLElement>("#smartshift-row");
+  if (smartShiftRow) smartShiftRow.hidden = threshold == null;
+  setToggle("#smartshift-toggle", smartShiftOn, threshold != null);
+
+  const slider = document.querySelector<HTMLInputElement>("#smartshift-threshold");
+  const thresholdRow = document.querySelector<HTMLElement>("#smartshift-threshold-row");
+  if (thresholdRow) thresholdRow.hidden = !smartShiftOn;
+  if (slider) {
+    const range = status.smartShiftRange;
+    if (range) {
+      slider.min = String(range.min);
+      slider.max = String(range.max);
+    }
+    // The five-second refresh must not yank the handle out from under a drag.
+    if (smartShiftOn && document.activeElement !== slider) slider.value = String(threshold);
+    slider.disabled = settingsPending || !smartShiftOn;
+  }
+  setText("#smartshift-threshold-value", smartShiftOn ? String(threshold) : "—");
+
+  setText("#wheel-ratchet-state", status.wheelRatchetEngaged == null
+    ? "—"
+    : status.wheelRatchetEngaged ? "Ratcheted now" : "Free-spinning now");
 }
 
 function renderLogitechDetails(status: MouseStatus): void {
@@ -1438,6 +1554,22 @@ async function applyDpiValue(dpi: number): Promise<boolean> {
   } finally {
     settingInProgress = false;
     buttons.forEach((button) => { button.disabled = false; });
+  }
+}
+
+/** Runs one Logitech wheel write, then refreshes from the mouse to confirm it. */
+async function applyWheelSetting(label: string, write: (client: LogitechHidppClient) => Promise<unknown>): Promise<void> {
+  if (!activeClient || refreshInProgress || settingInProgress) return;
+  const client = activeClient;
+  settingInProgress = true;
+  setText("#read-status", `${label}…`);
+  try {
+    await write(client);
+    showStatus(await client.readStatus());
+  } catch (error) {
+    setText("#read-status", error instanceof Error ? error.message : `Unable to apply ${label.toLowerCase()}.`);
+  } finally {
+    settingInProgress = false;
   }
 }
 

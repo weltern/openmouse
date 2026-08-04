@@ -7,9 +7,13 @@ export const VENDOR_ID = {
   logitech: 0x046d,
 } as const;
 
+/**
+ * Matched by the HID++ vendor collection rather than a product id: Logi Bolt
+ * alone ships under several ids (0xC548 and 0xC54D both seen), and a mouse
+ * attached by cable presents the same collection itself.
+ */
 export const LOGITECH_RECEIVER_FILTER: HIDDeviceFilter = {
   vendorId: VENDOR_ID.logitech,
-  productId: 0xc54d,
   usagePage: 0xff00,
   usage: 0x0001,
 };

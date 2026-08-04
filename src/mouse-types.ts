@@ -10,6 +10,10 @@ export interface MouseUiHints {
   settingsReady?: boolean;
   /** Hide 0.7 mm LOD option. */
   hideLodLow?: boolean;
+  /** Hide the whole lift-off-distance card (device exposes no LOD control). */
+  hideLodCard?: boolean;
+  /** Hide the whole polling-rate card (device runs at a fixed report rate). */
+  hidePollingCard?: boolean;
   /** Hide poll rates not listed in supportedPollingRates. */
   hideUnsupportedPollingRates?: boolean;
   /** Hide Motion Sync / angle snap / ripple card. */
@@ -33,7 +37,8 @@ export interface MouseStatus {
   dpi: number;
   dpiY?: number;
   supportsSeparateDpiAxes?: boolean;
-  pollingRateHz: number;
+  /** null when the device exposes no report-rate feature (e.g. Logitech MX line). */
+  pollingRateHz: number | null;
   supportedPollingRates?: number[];
   activeProfile: number | null;
   deviceMode?: "Onboard" | "Host" | "Unknown";
@@ -47,6 +52,25 @@ export interface MouseStatus {
   motionSync?: boolean | null;
   debounceMs?: number | null;
   sleepTimeout?: number | null;
+  /**
+   * Logitech 0x2111 byte 0 — the wheel's current ratchet mode, the same thing
+   * the physical wheel-mode button toggles. Not SmartShift on/off.
+   */
+  wheelMode?: "Freespin" | "Ratchet" | null;
+  /**
+   * Logitech 0x2111 byte 1. A threshold of 255 disables SmartShift; any lower
+   * value enables it and sets how gentle a flick releases the ratchet.
+   */
+  smartShiftThreshold?: number | null;
+  smartShiftRange?: { min: number; max: number } | null;
+  thumbWheelInverted?: boolean | null;
+  supportsThumbWheelInvert?: boolean;
+  /** Logitech 0x2121: high-resolution (smooth) scrolling. */
+  hiResScroll?: boolean | null;
+  invertScroll?: boolean | null;
+  supportsInvertScroll?: boolean;
+  /** Live read of whether the wheel is currently ratcheted. */
+  wheelRatchetEngaged?: boolean | null;
   angleSnapping?: boolean | null;
   rippleControl?: boolean | null;
   slamclickFilter?: boolean | null;
