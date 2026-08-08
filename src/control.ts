@@ -20,7 +20,12 @@ import {
   isEggWeClient,
   type EggWeHidClient,
 } from "./egg-we-control";
-import { LogitechHidppClient, type ReprogrammableControl } from "./logitech-hidpp";
+import {
+  HAPTIC_PRESET_VALUES,
+  LogitechHidppClient,
+  type HapticPreset,
+  type ReprogrammableControl,
+} from "./logitech-hidpp";
 import { controlName } from "./logitech-controls";
 import type { MouseStatus } from "./mouse-types";
 import type { EggButtonAction, EggButtonActionKey, EggOp1Status } from "./egg-op1-protocol";
@@ -306,7 +311,7 @@ function renderControl(): void {
           <article class="setting-card dpi-card"><div class="setting-heading"><div><p>DPI</p><h2>Sensitivity</h2></div><div class="dpi-header-actions"><input id="dpi-output" type="text" inputmode="numeric" value="— DPI" aria-label="DPI value" readonly /><button id="custom-dpi" type="button" disabled>Custom</button></div></div><div id="dpi-presets" class="segmented dpi-presets" aria-label="Common DPI values"></div><div id="logitech-axis-controls" style="display:none;margin-top:.6rem;padding-top:.6rem;border-top:1px solid #29292d"><div style="display:grid;grid-template-columns:1fr 1fr auto;gap:.45rem;align-items:end"><label style="color:#77777c;font-size:.6rem">X axis<input id="logitech-dpi-x" type="number" min="100" step="50" style="width:100%;box-sizing:border-box;margin-top:.2rem;padding:.42rem;border:1px solid #343438;border-radius:6px;background:#171719;color:#eee" /></label><label style="color:#77777c;font-size:.6rem">Y axis<input id="logitech-dpi-y" type="number" min="100" step="50" style="width:100%;box-sizing:border-box;margin-top:.2rem;padding:.42rem;border:1px solid #343438;border-radius:6px;background:#171719;color:#eee" /></label><button id="apply-logitech-axes" type="button" style="padding:.45rem .6rem;border:1px solid #45454a;border-radius:6px;background:#202023;color:#ececef;font-size:.62rem">Apply</button></div></div><div class="setting-action"><span id="dpi-pending">Choose a DPI value</span></div></article>
           <article class="setting-card"><div class="setting-heading"><div><p>POLLING RATE</p><h2>Report frequency</h2></div></div><div class="segmented rate-options"><button data-rate="125" disabled>125</button><button data-rate="250" disabled>250</button><button data-rate="500" disabled>500</button><button data-rate="1000" disabled>1K</button><button data-rate="2000" disabled>2K</button><button data-rate="4000" disabled>4K</button><button data-rate="8000" disabled>8K</button></div><small id="polling-note" class="setting-note">Higher rates update cursor movement more often, but use more battery.</small></article>
           <article class="setting-card"><div class="setting-heading"><div><p>SENSOR</p><h2>Lift-off distance</h2></div></div><div id="generic-lod-options" class="segmented three"><button data-lod="Low" disabled>0.7 mm</button><button data-lod="Medium" disabled>1 mm</button><button data-lod="High" disabled>2 mm</button></div><select id="egg-lod-select" hidden style="width:100%;padding:.48rem;border:1px solid #343438;border-radius:6px;background:#171719;color:#eee"></select><small class="setting-note">Controls how far you can lift the mouse before tracking stops. Higher values keep tracking a little longer.</small></article>
-          <article id="wheel-settings" class="setting-card" style="display:none"><div class="setting-heading"><div><p>SCROLL WHEEL</p><h2>Ratchet &amp; scrolling</h2></div><output id="wheel-ratchet-state" style="color:#8b8b90;font-size:.6rem">—</output></div><div id="wheel-mode-options" class="segmented"><button data-wheelmode="Freespin" disabled>Free-spin</button><button data-wheelmode="Ratchet" disabled>Ratchet</button></div><div id="smartshift-row" style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>SmartShift</span><button id="smartshift-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><label id="smartshift-threshold-row" style="display:block;color:#77777c;font-size:.6rem">Threshold <output id="smartshift-threshold-value">—</output><input id="smartshift-threshold" type="range" min="10" max="75" step="1" disabled style="width:100%;margin-top:.25rem" /></label><small class="setting-note" style="margin-top:.1rem">Lower releases the ratchet on a gentler flick.</small></div><div style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>High-resolution scrolling</span><button id="hires-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="invert-scroll-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert scroll direction</span><button id="invert-scroll-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="thumbwheel-invert-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert thumb wheel</span><button id="thumbwheel-invert-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div></div></article>
+          <article id="wheel-settings" class="setting-card" style="display:none"><div class="setting-heading"><div><p>SCROLL WHEEL</p><h2>Ratchet &amp; scrolling</h2></div><output id="wheel-ratchet-state" style="color:#8b8b90;font-size:.6rem">—</output></div><div id="wheel-mode-options" class="segmented"><button data-wheelmode="Freespin" disabled>Free-spin</button><button data-wheelmode="Ratchet" disabled>Ratchet</button></div><div id="smartshift-row" style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>SmartShift</span><button id="smartshift-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><label id="smartshift-threshold-row" style="display:block;color:#77777c;font-size:.6rem">Threshold <output id="smartshift-threshold-value">—</output><input id="smartshift-threshold" type="range" min="10" max="75" step="1" disabled style="width:100%;margin-top:.25rem" /></label><small class="setting-note" style="margin-top:.1rem">Lower releases the ratchet on a gentler flick.</small></div><div style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>High-resolution scrolling</span><button id="hires-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="invert-scroll-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert scroll direction</span><button id="invert-scroll-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="thumbwheel-invert-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert thumb wheel</span><button id="thumbwheel-invert-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div></div></article><article id="haptic-settings" class="setting-card" style="display:none"><div class="setting-heading"><div><p>HAPTICS</p><h2>Feedback strength</h2></div><output id="haptic-value" style="color:#8b8b90;font-size:.6rem">&mdash;</output></div><div id="haptic-options" class="segmented"><button data-haptic="Subtle" disabled>Subtle</button><button data-haptic="Low" disabled>Low</button><button data-haptic="Medium" disabled>Medium</button><button data-haptic="High" disabled>High</button></div><small class="setting-note" style="margin-top:.45rem">How firmly the mouse buzzes. Medium is the factory setting.</small></article>
           <article id="button-settings" class="setting-card" style="display:none;grid-column:1/-1"><div class="setting-heading"><div><p>BUTTONS</p><h2>Remapping</h2></div></div><div id="button-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:.55rem"></div><div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.6rem"><button id="refresh-buttons" type="button" style="padding:.45rem .7rem;border:1px solid #3a3a41;border-radius:6px;background:#1c1c20;color:#d8d8dc;font-size:.64rem">Re-read from mouse</button><button id="reclaim-buttons" type="button" hidden style="padding:.45rem .7rem;border:1px solid #5c4a2a;border-radius:6px;background:#241f16;color:#e2c489;font-size:.64rem">Restore buttons to hardware control</button></div><small id="button-note" class="setting-note">Each button can be made to act as another button on this mouse.</small></article>
         </section>
         <section id="logitech-device-details" class="device-data" style="display:none;margin-top:.65rem">
@@ -389,8 +394,22 @@ function renderControl(): void {
   document.querySelectorAll<HTMLButtonElement>("[data-wheelmode]").forEach((button) => {
     button.addEventListener("click", () => {
       const mode = button.dataset.wheelmode === "Freespin" ? "Freespin" : "Ratchet";
-      void applyWheelSetting(`Switching the wheel to ${mode === "Freespin" ? "free-spin" : "ratchet"}`,
+      void applyLogitechSetting(`Switching the wheel to ${mode === "Freespin" ? "free-spin" : "ratchet"}`,
         (client) => client.setWheelMode(mode));
+    });
+  });
+
+  document.querySelectorAll<HTMLButtonElement>("[data-haptic]").forEach((button) => {
+    button.addEventListener("click", () => {
+      const preset = button.dataset.haptic as HapticPreset | undefined;
+      if (!preset || !(preset in HAPTIC_PRESET_VALUES)) return;
+      void applyLogitechSetting(`Setting haptic feedback to ${preset.toLowerCase()}`, async (client) => {
+        await client.setHapticIntensity(HAPTIC_PRESET_VALUES[preset]);
+        // Buzz once at the new strength, the way Logi Options+ does, so the
+        // choice is felt rather than merely displayed. A mouse that refuses
+        // the sample must not make the strength change itself look failed.
+        await client.playHapticEffect().catch(() => undefined);
+      });
     });
   });
 
@@ -408,31 +427,31 @@ function renderControl(): void {
     // Re-enabling restores whatever the slider is showing, which is the last
     // value the mouse reported rather than an invented default.
     const threshold = enabled ? Number(slider?.value ?? 0) || null : null;
-    void applyWheelSetting(`${enabled ? "Enabling" : "Disabling"} SmartShift`,
+    void applyLogitechSetting(`${enabled ? "Enabling" : "Disabling"} SmartShift`,
       (client) => client.setSmartShiftThreshold(threshold));
   });
 
   document.querySelector<HTMLInputElement>("#smartshift-threshold")?.addEventListener("change", (event) => {
     const threshold = Number((event.currentTarget as HTMLInputElement).value);
-    void applyWheelSetting(`Setting the SmartShift threshold to ${threshold}`,
+    void applyLogitechSetting(`Setting the SmartShift threshold to ${threshold}`,
       (client) => client.setSmartShiftThreshold(threshold));
   });
 
   document.querySelector<HTMLButtonElement>("#thumbwheel-invert-toggle")?.addEventListener("click", (event) => {
     const enabled = (event.currentTarget as HTMLButtonElement).getAttribute("aria-checked") !== "true";
-    void applyWheelSetting(`${enabled ? "Inverting" : "Restoring"} the thumb wheel`,
+    void applyLogitechSetting(`${enabled ? "Inverting" : "Restoring"} the thumb wheel`,
       (client) => client.setThumbWheelInverted(enabled));
   });
 
   document.querySelector<HTMLButtonElement>("#hires-toggle")?.addEventListener("click", (event) => {
     const enabled = (event.currentTarget as HTMLButtonElement).getAttribute("aria-checked") !== "true";
-    void applyWheelSetting(`${enabled ? "Enabling" : "Disabling"} high-resolution scrolling`,
+    void applyLogitechSetting(`${enabled ? "Enabling" : "Disabling"} high-resolution scrolling`,
       (client) => client.setHiResScroll(enabled));
   });
 
   document.querySelector<HTMLButtonElement>("#invert-scroll-toggle")?.addEventListener("click", (event) => {
     const enabled = (event.currentTarget as HTMLButtonElement).getAttribute("aria-checked") !== "true";
-    void applyWheelSetting(`${enabled ? "Inverting" : "Restoring"} scroll direction`,
+    void applyLogitechSetting(`${enabled ? "Inverting" : "Restoring"} scroll direction`,
       (client) => client.setInvertScroll(enabled));
   });
   document.querySelector<HTMLInputElement>("#dpi-output")?.addEventListener("keydown", (event) => {
@@ -959,6 +978,7 @@ function showStatus(status: MouseStatus): void {
   if (dpiX) dpiX.value = String(status.dpi);
   if (dpiY) dpiY.value = String(status.dpiY ?? status.dpi);
   renderWheelSettings(status, settingsPending);
+  renderHapticSettings(status, settingsPending);
   const logitechDetails = document.querySelector<HTMLElement>("#logitech-device-details");
   if (logitechDetails) logitechDetails.style.display = status.brand === "Logitech" ? "block" : "none";
   if (status.brand === "Logitech") renderLogitechDetails(status);
@@ -1086,6 +1106,32 @@ function renderWheelSettings(status: MouseStatus, settingsPending: boolean): voi
   setText("#wheel-ratchet-state", status.wheelRatchetEngaged == null
     ? "—"
     : status.wheelRatchetEngaged ? "Ratcheted now" : "Free-spinning now");
+}
+
+/**
+ * Haptics card. Only the MX Master 4 implements 0x19B0, so the card stays
+ * hidden everywhere else. The four presets are the ones Logi Options+ writes;
+ * a value outside them is still shown, because Options+ or a future firmware
+ * may set something this list does not cover and silently rounding it to the
+ * nearest button would misreport the mouse.
+ */
+function renderHapticSettings(status: MouseStatus, settingsPending: boolean): void {
+  const card = document.querySelector<HTMLElement>("#haptic-settings");
+  if (!card) return;
+
+  const intensity = status.hapticIntensity;
+  card.style.display = intensity == null ? "none" : "";
+  if (intensity == null) return;
+
+  const match = (Object.keys(HAPTIC_PRESET_VALUES) as HapticPreset[])
+    .find((preset) => HAPTIC_PRESET_VALUES[preset] === intensity);
+
+  document.querySelectorAll<HTMLButtonElement>("[data-haptic]").forEach((button) => {
+    button.classList.toggle("selected", button.dataset.haptic === match);
+    button.disabled = settingsPending;
+  });
+
+  setText("#haptic-value", match ?? String(intensity));
 }
 
 function renderLogitechDetails(status: MouseStatus): void {
@@ -1638,8 +1684,18 @@ async function applyDpiValue(dpi: number): Promise<boolean> {
 }
 
 /** Runs one Logitech wheel write, then refreshes from the mouse to confirm it. */
-async function applyWheelSetting(label: string, write: (client: LogitechHidppClient) => Promise<unknown>): Promise<void> {
-  if (!activeClient || refreshInProgress || settingInProgress) return;
+async function applyLogitechSetting(label: string, write: (client: LogitechHidppClient) => Promise<unknown>): Promise<void> {
+  if (!activeClient || settingInProgress) return;
+  // Every settings card sat behind the plain drop-the-click guard that
+  // waitForIdle exists to replace — it was only ever wired into the button
+  // paths. A press landing inside the five-second poll did nothing at all and
+  // said nothing about why.
+  if (!await waitForIdle()) {
+    setText("#read-status", "The mouse is busy; try again in a moment.");
+    return;
+  }
+  // The wait yields to other handlers, so neither of these is still guaranteed.
+  if (!activeClient || settingInProgress) return;
   const client = activeClient;
   settingInProgress = true;
   setText("#read-status", `${label}…`);

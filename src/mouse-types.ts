@@ -65,6 +65,11 @@ export interface MouseStatus {
   smartShiftRange?: { min: number; max: number } | null;
   thumbWheelInverted?: boolean | null;
   supportsThumbWheelInvert?: boolean;
+  /**
+   * Logitech 0x19B0 byte 1 — haptic strength. Null when the mouse has no
+   * haptic feature at all, which is every Logitech mouse but the MX Master 4.
+   */
+  hapticIntensity?: number | null;
   /** Logitech 0x2121: high-resolution (smooth) scrolling. */
   hiResScroll?: boolean | null;
   invertScroll?: boolean | null;

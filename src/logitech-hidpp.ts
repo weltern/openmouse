@@ -46,6 +46,7 @@ const FEATURE = {
   smartShiftEnhanced: 0x2111,
   hiresWheel: 0x2121,
   thumbWheel: 0x2150,
+  haptic: 0x19b0,
   reprogControls: 0x1b04,
   extendedDpi: 0x2202,
   extendedReportRate: 0x8061,
@@ -69,6 +70,34 @@ const SMART_SHIFT_OFF = 0xff;
  * notifications, so the wheel would simply stop working.
  */
 const WHEEL_MODE_BIT = { divert: 0x01, hiRes: 0x02, invert: 0x04 } as const;
+
+/**
+ * 0x19B0 read fn 0x10 / write fn 0x20. Byte 1 is the haptic strength, proven by
+ * watching Logi Options+ write it: its four presets send exactly these values,
+ * each one read straight back by the getter, and 60 is also what fn 0x00
+ * reports as the device default.
+ *
+ * Byte 0 held 0x03 across every one of those writes and is deliberately left
+ * unnamed — nothing has demonstrated what it controls, so writes read the pair
+ * and preserve it rather than guessing. Naming a byte from inferred behaviour
+ * is exactly how the SmartShift controls got mislabelled the first time.
+ */
+const HAPTIC_PRESETS = { Subtle: 25, Low: 45, Medium: 60, High: 100 } as const;
+
+export type HapticPreset = keyof typeof HAPTIC_PRESETS;
+
+export const HAPTIC_PRESET_VALUES: Readonly<Record<HapticPreset, number>> = HAPTIC_PRESETS;
+
+/** The widest value the presets use; anything beyond it is untested territory. */
+const HAPTIC_INTENSITY_MAX = HAPTIC_PRESETS.High;
+
+/**
+ * 0x19B0 fn 0x04 fires the haptic motor. Confirmed on a real MX Master 4:
+ * Logi Options+ calls it straight after every strength write, and replaying
+ * that call produced a buzz you can feel. Effect 8 is the sample it uses; what
+ * the other effect ids do is unexplored.
+ */
+const HAPTIC_SAMPLE_EFFECT = 0x08;
 
 export type LogitechMouseStatus = MouseStatus;
 
@@ -261,6 +290,7 @@ export class LogitechHidppClient {
       : null;
     const profileState = await this.readProfileState(profilesFeature.index);
     const wheel = await this.readWheelState();
+    const hapticIntensity = await this.readHapticIntensity();
     const firmware = this.firmwareCache ?? (this.firmwareCache = await this.readFirmware(firmwareFeature.index));
 
     return {
@@ -293,6 +323,7 @@ export class LogitechHidppClient {
       wheelRatchetEngaged: wheel.wheelRatchetEngaged,
       thumbWheelInverted: wheel.thumbWheelInverted,
       supportsThumbWheelInvert: wheel.supportsThumbWheelInvert,
+      hapticIntensity,
       unitId: identity.unitId,
       modelId: identity.modelId,
       transportIds: identity.transportIds,
@@ -471,6 +502,55 @@ export class LogitechHidppClient {
       throw new Error(`The mouse kept ${result ?? "an unknown"} lift-off distance instead of ${liftOffDistance}.`);
     }
     return result;
+  }
+
+  /**
+   * Haptic strength, or null when the mouse has no 0x19B0 feature. The reply's
+   * byte 1 is the live value; byte 0 is carried untouched into any later write.
+   */
+  private async readHapticIntensity(): Promise<number | null> {
+    const feature = await this.getFeature(FEATURE.haptic);
+    if (!feature.index) return null;
+    const reply = await this.request(feature.index, 0x10);
+    return reply[4] ?? null;
+  }
+
+  /**
+   * Sets the haptic strength. 0x19B0 writes carry both bytes, so the current
+   * pair is read first and only byte 1 is changed — the same discipline 0x2111
+   * needs, and for the same reason: a write that zeroes its companion byte
+   * silently discards a setting it was never asked to touch.
+   */
+  async setHapticIntensity(intensity: number): Promise<number> {
+    const value = Math.round(intensity);
+    if (!Number.isFinite(value) || value < 0 || value > HAPTIC_INTENSITY_MAX) {
+      throw new Error(`Haptic intensity must be between 0 and ${HAPTIC_INTENSITY_MAX}.`);
+    }
+
+    const feature = await this.getFeature(FEATURE.haptic);
+    if (!feature.index) throw new Error("This mouse has no haptic feature.");
+
+    const current = await this.request(feature.index, 0x10);
+    const confirmed = await this.request(feature.index, 0x20, current[3] ?? 0, value);
+
+    const applied = confirmed[4] ?? -1;
+    if (applied !== value) {
+      throw new Error(`The mouse kept a haptic intensity of ${applied}.`);
+    }
+    return applied;
+  }
+
+  /**
+   * Buzzes the mouse once, at whatever strength is currently set. Nothing
+   * persists — the motor runs and stops — so this is safe to fire as feedback.
+   */
+  async playHapticEffect(effect: number = HAPTIC_SAMPLE_EFFECT): Promise<void> {
+    if (!Number.isInteger(effect) || effect < 0 || effect > 0xff) {
+      throw new Error("A haptic effect id must be a single byte.");
+    }
+    const feature = await this.getFeature(FEATURE.haptic);
+    if (!feature.index) throw new Error("This mouse has no haptic feature.");
+    await this.request(feature.index, 0x40, effect);
   }
 
   /**

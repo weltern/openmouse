@@ -16,6 +16,7 @@ const FEATURE_INDEX = {
   hiresWheel: 0x12,
   thumbWheel: 0x13,
   adjustableDpi: 0x14,
+  haptic: 0x0b,
 } as const;
 
 /** Feature id -> index, mirroring the table an MX Master 4 reports. */
@@ -28,6 +29,7 @@ const MX_MASTER_4_FEATURES = new Map<number, number>([
   [0x2121, FEATURE_INDEX.hiresWheel],
   [0x2150, FEATURE_INDEX.thumbWheel],
   [0x2201, FEATURE_INDEX.adjustableDpi],
+  [0x19b0, FEATURE_INDEX.haptic],
 ]);
 
 interface FakeDeviceOptions {
@@ -40,6 +42,7 @@ interface FakeDeviceOptions {
   wheelMode?: number;
   smartShift?: { mode: number; threshold: number };
   thumbWheel?: { diverted: number; inverted: number };
+  haptic?: { companion: number; intensity: number };
 }
 
 /**
@@ -66,6 +69,9 @@ class FakeHidDevice implements Partial<HIDDevice> {
   wheelMode: number;
   smartShift: { mode: number; threshold: number };
   thumbWheel: { diverted: number; inverted: number };
+  haptic: { companion: number; intensity: number };
+  /** Effect ids the client asked the motor to play, in order. */
+  readonly hapticEffectsPlayed: number[] = [];
   /** Changes between reads, standing in for a value the cache must not freeze. */
   batteryPercent = 90;
 
@@ -77,6 +83,8 @@ class FakeHidDevice implements Partial<HIDDevice> {
     this.wheelMode = options.wheelMode ?? 0x00;
     this.smartShift = options.smartShift ?? { mode: 2, threshold: 0xff };
     this.thumbWheel = options.thumbWheel ?? { diverted: 1, inverted: 0 };
+    // 0x03 / 60 is the pair a real MX Master 4 rests at.
+    this.haptic = options.haptic ?? { companion: 0x03, intensity: 60 };
   }
 
   async open(): Promise<void> {
@@ -179,6 +187,19 @@ class FakeHidDevice implements Partial<HIDDevice> {
         }
         if (functionByte === (0x30 | SOFTWARE_ID)) return ok(0x01);
         return ok(this.wheelMode);
+
+      case FEATURE_INDEX.haptic:
+        if (functionByte === (0x40 | SOFTWARE_ID)) {
+          this.hapticEffectsPlayed.push(parameters[0]);
+          return ok(parameters[0]);
+        }
+        // Mirrors the MX Master 4: a two-byte pair whose byte 0 is a companion
+        // field the client has no business clearing.
+        if (functionByte === (0x20 | SOFTWARE_ID)) {
+          this.haptic = { companion: parameters[0], intensity: parameters[1] };
+          return ok(this.haptic.companion, this.haptic.intensity);
+        }
+        return ok(this.haptic.companion, this.haptic.intensity);
 
       case FEATURE_INDEX.thumbWheel:
         if (functionByte === (0x00 | SOFTWARE_ID)) return ok(0x00, 0x14, 0x00, 0x78, 0x00, 0x03, 0x03, 0xe8);
@@ -423,4 +444,66 @@ test("only Logitech devices exposing the HID++ collection are supported", () => 
   assert.equal(LogitechHidppClient.isSupported(hidpp as unknown as HIDDevice), true);
   assert.equal(LogitechHidppClient.isSupported(keyboard as unknown as HIDDevice), false);
   assert.equal(LogitechHidppClient.isSupported(other as unknown as HIDDevice), false);
+});
+
+test("haptic intensity is read from 0x19B0 byte 1", async () => {
+  const { client } = await connectClient({ haptic: { companion: 0x03, intensity: 45 } });
+  const status = await client.readStatus();
+  assert.equal(status.hapticIntensity, 45);
+});
+
+test("a mouse without 0x19B0 reports no haptic intensity", async () => {
+  const features = new Map(MX_MASTER_4_FEATURES);
+  features.delete(0x19b0);
+  const { client } = await connectClient({ features });
+  const status = await client.readStatus();
+  assert.equal(status.hapticIntensity, null);
+});
+
+test("setting haptic intensity preserves the companion byte", async () => {
+  const { client, device } = await connectClient({ haptic: { companion: 0x03, intensity: 60 } });
+  assert.equal(await client.setHapticIntensity(25), 25);
+  assert.equal(device.haptic.intensity, 25);
+  assert.equal(device.haptic.companion, 0x03, "byte 0 was clobbered by the intensity write");
+});
+
+test("every Logi Options+ haptic preset round-trips", async () => {
+  const { client, device } = await connectClient();
+  for (const value of [25, 45, 60, 100]) {
+    assert.equal(await client.setHapticIntensity(value), value);
+    assert.equal(device.haptic.intensity, value);
+    assert.equal(device.haptic.companion, 0x03);
+  }
+});
+
+test("haptic intensity outside the range the presets use is refused", async () => {
+  const { client, device } = await connectClient();
+  await assert.rejects(() => client.setHapticIntensity(101), /between 0 and 100/);
+  await assert.rejects(() => client.setHapticIntensity(-1), /between 0 and 100/);
+  assert.equal(device.haptic.intensity, 60, "a refused write still reached the mouse");
+});
+
+test("the sample buzz reaches the mouse as 0x19B0 fn 0x04", async () => {
+  const { client, device } = await connectClient();
+  await client.playHapticEffect();
+  assert.deepEqual(device.hapticEffectsPlayed, [8], "effect 8 is the sample Logi Options+ plays");
+
+  await client.playHapticEffect(3);
+  assert.deepEqual(device.hapticEffectsPlayed, [8, 3]);
+});
+
+test("a haptic effect id wider than a byte is refused", async () => {
+  const { client, device } = await connectClient();
+  await assert.rejects(() => client.playHapticEffect(256), /single byte/);
+  await assert.rejects(() => client.playHapticEffect(-1), /single byte/);
+  await assert.rejects(() => client.playHapticEffect(1.5), /single byte/);
+  assert.deepEqual(device.hapticEffectsPlayed, [], "a refused effect still reached the mouse");
+});
+
+test("a mouse without 0x19B0 refuses to buzz rather than writing to feature 0", async () => {
+  const features = new Map(MX_MASTER_4_FEATURES);
+  features.delete(0x19b0);
+  const { client, device } = await connectClient({ features });
+  await assert.rejects(() => client.playHapticEffect(), /no haptic feature/);
+  assert.deepEqual(device.hapticEffectsPlayed, []);
 });
