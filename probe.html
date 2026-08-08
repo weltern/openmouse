@@ -12,6 +12,9 @@
            border-radius:7px; background:#1c1c20; color:#ececef; font-size:.82rem; cursor:pointer }
   button:hover:enabled { background:#26262b; border-color:#4d4d55 }
   button:disabled { opacity:.45; cursor:default }
+  button.risky { border-color:#6b4a1e; color:#f0c887 }
+  button.risky:hover:enabled { background:#2a1f10; border-color:#8a6026 }
+  p.sub.warn { margin:.2rem 0 1.1rem; color:#a08a63 }
   pre { margin:0; padding:1rem; border:1px solid #26262b; border-radius:9px; background:#0a0a0c;
         color:#cfcfd6; font:12px/1.55 ui-monospace, "JetBrains Mono", Consolas, monospace;
         white-space:pre-wrap; word-break:break-word; min-height:16rem }
@@ -29,7 +32,25 @@
 <button id="rescan">Re-probe authorized</button>
 <button id="wheel">Dump wheel features</button>
 <button id="buttons">Dump buttons</button>
+<button id="scan-safe">Scan haptics &amp; force (reads)</button>
+<button id="scan-deep" class="risky">Scan haptics &amp; force (deep)</button>
+<button id="watch">Watch live values</button>
+<button id="buzz" class="risky">Buzz test (0x19B0 fn 0x04)</button>
+<label style="font-size:.78rem;color:#85858c">effect
+  <input id="buzz-effect" type="number" min="0" max="255" value="8"
+         style="width:4.2rem;padding:.3rem .4rem;border:1px solid #3a3a41;border-radius:6px;
+                background:#1c1c20;color:#ececef" />
+</label>
 <button id="copy">Copy log</button>
+
+<p class="sub warn">
+  The two scan buttons walk the function ids of 0x19B0 HAPTIC, 0x19C0 FORCE SENSING BUTTON
+  and 0x2251 WHEEL STATS &mdash; features Solaar names but nobody has decoded. The first
+  stops at function 0x03, which by HID++ convention is still getter territory. The
+  <strong>deep</strong> scan goes to 0x0F and can therefore call a setter with all-zero
+  arguments; run the safe scan first so its output records anything a write would need to
+  restore.
+</p>
 
 <pre id="log">Ready. Click &ldquo;Pick a Logitech HID++ device&rdquo; and choose your receiver
 (or the mouse itself, if it is plugged in by cable or paired over Bluetooth).</pre>

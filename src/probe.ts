@@ -41,6 +41,8 @@ const FEATURE_NAMES: Record<number, string> = {
   0x1815: "HOSTS INFO",
   0x1830: "LOW POWER MODE",
   0x1861: "BATTERY VOLTAGE (EXT)",
+  0x19b0: "HAPTIC",
+  0x19c0: "FORCE SENSING BUTTON",
   0x1b04: "REPROG CONTROLS V4",
   0x1d4b: "WIRELESS DEVICE STATUS",
   0x1df3: "EQUAD DJ DEVICE PAIRING",
@@ -58,6 +60,7 @@ const FEATURE_NAMES: Record<number, string> = {
   0x2202: "EXTENDED ADJUSTABLE DPI",
   0x2205: "POINTER MOTION SCALING",
   0x2250: "ANALYSIS MODE",
+  0x2251: "WHEEL STATS",
   0x2400: "HYBRID TRACKING",
   0x40a3: "FN INVERSION",
   0x4523: "DISABLE KEYS BY USAGE",
@@ -116,28 +119,39 @@ class Transceiver {
     reject: (reason: Error) => void;
   } | null = null;
 
+  /**
+   * Reports that answer nothing we asked for are device-initiated notifications.
+   * Discarding them, as this used to, makes the whole class of event-reporting
+   * features invisible — a feature that streams its data instead of answering a
+   * getter would look simply absent. They are handed to onNotification instead.
+   */
+  onNotification: ((report: Uint8Array) => void) | null = null;
+
   private readonly onInputReport = (event: HIDInputReportEvent): void => {
     if (event.reportId !== SHORT_REPORT_ID && event.reportId !== LONG_REPORT_ID) return;
-    const request = this.pending;
-    if (!request) return;
 
     const report = new Uint8Array(
       event.data.buffer.slice(event.data.byteOffset, event.data.byteOffset + event.data.byteLength),
     );
-    if (report[0] !== request.deviceIndex) return;
+    const request = this.pending;
 
-    if (report[1] === ERROR_HIDPP20 && report[2] === request.featureIndex && report[3] === request.functionByte) {
-      this.settle().reject(new HidppError(report[4] ?? 0, "hidpp20"));
-      return;
+    if (request && report[0] === request.deviceIndex) {
+      if (report[1] === ERROR_HIDPP20 && report[2] === request.featureIndex && report[3] === request.functionByte) {
+        this.settle().reject(new HidppError(report[4] ?? 0, "hidpp20"));
+        return;
+      }
+      // HID++ 1.0 errors carry the offending sub-id in byte 2 rather than a feature index.
+      if (report[1] === ERROR_HIDPP10) {
+        this.settle().reject(new HidppError(report[4] ?? 0, "hidpp10"));
+        return;
+      }
+      if (report[1] === request.featureIndex && report[2] === request.functionByte) {
+        this.settle().resolve(report);
+        return;
+      }
     }
-    // HID++ 1.0 errors carry the offending sub-id in byte 2 rather than a feature index.
-    if (report[1] === ERROR_HIDPP10) {
-      this.settle().reject(new HidppError(report[4] ?? 0, "hidpp10"));
-      return;
-    }
-    if (report[1] === request.featureIndex && report[2] === request.functionByte) {
-      this.settle().resolve(report);
-    }
+
+    this.onNotification?.(report);
   };
 
   constructor(readonly device: HIDDevice) {}
@@ -217,6 +231,29 @@ async function ping(bus: Transceiver, deviceIndex: number): Promise<{ major: num
 async function getFeatureIndex(bus: Transceiver, deviceIndex: number, featureId: number): Promise<number> {
   const reply = await bus.request(deviceIndex, ROOT_FEATURE_INDEX, 0x0, [featureId >> 8, featureId & 0xff]);
   return reply[3] ?? 0;
+}
+
+/**
+ * Feature index → feature id, the reverse of the root lookup. A notification
+ * carries only the index, so without this map an event can only be identified
+ * by guessing at the shape of its payload.
+ */
+async function readFeatureMap(bus: Transceiver, deviceIndex: number): Promise<Map<number, number>> {
+  const map = new Map<number, number>([[0x00, 0x0000]]);
+  const featureSetIndex = await getFeatureIndex(bus, deviceIndex, 0x0001);
+  if (!featureSetIndex) return map;
+  map.set(featureSetIndex, 0x0001);
+
+  const count = (await bus.request(deviceIndex, featureSetIndex, 0x0))[3] ?? 0;
+  for (let index = 1; index <= count; index += 1) {
+    try {
+      const reply = await bus.request(deviceIndex, featureSetIndex, 0x1, [index]);
+      map.set(index, ((reply[3] ?? 0) << 8) | (reply[4] ?? 0));
+    } catch {
+      // A gap in the table is not worth abandoning the rest of it.
+    }
+  }
+  return map;
 }
 
 async function readDeviceName(bus: Transceiver, deviceIndex: number): Promise<string> {
@@ -574,6 +611,294 @@ async function dumpButtons(device: HIDDevice): Promise<void> {
   }
 }
 
+/**
+ * Features that exist on this hardware but that no public tool implements.
+ * Solaar names 0x19B0 HAPTIC, 0x19C0 FORCE SENSING BUTTON and 0x2251 WHEEL
+ * STATS in its id table and stops there — no function ids, no byte layouts. On
+ * the MX Master 4 all three are flagged plain rather than engineering or
+ * hidden, so they are meant to be driven, not merely present.
+ */
+const UNDOCUMENTED_FEATURES = [0x19b0, 0x19c0, 0x2251] as const;
+
+/**
+ * How far up the function space to walk. HID++ 2.0 numbers each feature's
+ * functions from zero and, by near-universal convention, puts the getters
+ * first, so a low ceiling reads state with little chance of reaching a setter.
+ * The deep ceiling can call a setter with all-zero arguments — only use it once
+ * the safe pass has recorded values that a write could be restored from.
+ */
+const SAFE_FUNCTION_CEILING = 0x03;
+const DEEP_FUNCTION_CEILING = 0x0f;
+
+/**
+ * A refusal is as informative as a reply here. "Invalid function id" is the
+ * only code that proves a function is absent; every other rejection means the
+ * device recognised the call and objected to the arguments, which maps the
+ * function space without ever landing a write.
+ */
+function classifyRefusal(error: HidppError): string {
+  if (error.kind !== "hidpp20") return `inconclusive (${error.message})`;
+  switch (error.code) {
+    case 0x07: return "—";
+    case 0x02: return "EXISTS — rejected zero arguments";
+    case 0x03: return "EXISTS — argument out of range";
+    case 0x08: return "EXISTS — device busy, worth a retry";
+    case 0x09: return "EXISTS — unsupported in this state";
+    default: return `EXISTS — ${error.message}`;
+  }
+}
+
+async function scanFunctions(
+  bus: Transceiver,
+  deviceIndex: number,
+  featureId: number,
+  ceiling: number,
+): Promise<void> {
+  const label = FEATURE_NAMES[featureId] ?? "(unknown)";
+  log("");
+  log(`  0x${hex(featureId, 4)} ${label}`);
+
+  const featureIndex = await getFeatureIndex(bus, deviceIndex, featureId);
+  if (!featureIndex) {
+    log("    not implemented by this device.");
+    return;
+  }
+  log(`    feature index 0x${hex(featureIndex)}`);
+
+  for (let fn = 0; fn <= ceiling; fn += 1) {
+    try {
+      const reply = await bus.request(deviceIndex, featureIndex, fn, [], 1200);
+      // A short reply carries 3 payload bytes, a long one 16 — which of the two
+      // a function answers with is itself a clue to how much state it returns.
+      const shape = reply.length > 7 ? "long " : "short";
+      log(`    fn 0x${hex(fn)}  REPLY ${shape}  ${hexBytes(reply.slice(3))}`);
+    } catch (error) {
+      if (error instanceof HidppError) {
+        log(`    fn 0x${hex(fn)}  ${classifyRefusal(error)}`);
+      } else {
+        log(`    fn 0x${hex(fn)}  <${error instanceof Error ? error.message : String(error)}>`);
+      }
+    }
+  }
+}
+
+async function dumpUndocumented(device: HIDDevice, ceiling: number): Promise<void> {
+  describeDevice(device);
+  const bus = new Transceiver(device);
+  await bus.open();
+
+  try {
+    const deviceIndex = await findLiveIndex(bus);
+    if (deviceIndex === null) {
+      log("  no live device index — wake the mouse and retry.");
+      return;
+    }
+    log(`  using device index 0x${hex(deviceIndex)}`);
+    log(`  walking function ids 0x00-0x${hex(ceiling)} with no arguments`);
+
+    for (const featureId of UNDOCUMENTED_FEATURES) {
+      await scanFunctions(bus, deviceIndex, featureId, ceiling);
+    }
+
+    log("");
+    log("Done.");
+  } finally {
+    await bus.close();
+  }
+}
+
+/**
+ * Getters worth sampling repeatedly. The safe scan showed 0x19C0 fn 0x02
+ * answering with a single 16-bit value inside the range fn 0x01 advertises,
+ * which is the shape of either a live force reading or a stored calibration
+ * point. Only watching it while the panel is pressed tells the two apart.
+ */
+const WATCH_TARGETS: ReadonlyArray<{ featureId: number; fn: number; label: string; control?: true }> = [
+  { featureId: 0x19c0, fn: 0x02, label: "force fn02" },
+  { featureId: 0x19c0, fn: 0x01, label: "force fn01" },
+  { featureId: 0x19b0, fn: 0x01, label: "haptic fn01" },
+  /**
+   * Positive control. 0x2121 fn 0x03 is known to track the wheel's ratchet
+   * state, so pressing the wheel-mode button must make this line move. If it
+   * does not, the watcher is broken and every other flat reading in the same
+   * run proves nothing — a silent log and a dead probe look identical.
+   */
+  { featureId: 0x2121, fn: 0x03, label: "ratchet CONTROL", control: true },
+  /** Candidate counters: if these are wheel statistics, scrolling moves them. */
+  { featureId: 0x2251, fn: 0x01, label: "wheelstats fn01" },
+  { featureId: 0x2251, fn: 0x02, label: "wheelstats fn02" },
+];
+
+const WATCH_INTERVAL_MS = 60;
+/** Stops a chatty device from burying the interesting lines. */
+const MAX_NOTIFICATIONS_LOGGED = 600;
+
+let watching = false;
+
+/**
+ * Polls the watch targets and prints a line only when a payload changes, so
+ * pressing the panel shows up as a short burst in an otherwise silent log
+ * rather than being buried under thousands of identical samples.
+ */
+async function watchTargets(device: HIDDevice): Promise<void> {
+  describeDevice(device);
+  const bus = new Transceiver(device);
+  await bus.open();
+
+  try {
+    const deviceIndex = await findLiveIndex(bus);
+    if (deviceIndex === null) {
+      log("  no live device index — wake the mouse and retry.");
+      return;
+    }
+    log(`  using device index 0x${hex(deviceIndex)}`);
+
+    const targets: Array<{
+      label: string;
+      featureIndex: number;
+      fn: number;
+      last: string;
+      changes: number;
+      control?: true;
+    }> = [];
+    for (const target of WATCH_TARGETS) {
+      const featureIndex = await getFeatureIndex(bus, deviceIndex, target.featureId);
+      if (!featureIndex) {
+        log(`  ${target.label}: 0x${hex(target.featureId, 4)} not implemented.`);
+        continue;
+      }
+      targets.push({ label: target.label, featureIndex, fn: target.fn, last: "", changes: 0, control: target.control });
+    }
+    if (!targets.length) return;
+
+    const featureMap = await readFeatureMap(bus, deviceIndex);
+    log(`  resolved ${featureMap.size} feature indices`);
+
+    let notifications = 0;
+    bus.onNotification = (report) => {
+      notifications += 1;
+      if (notifications > MAX_NOTIFICATIONS_LOGGED) return;
+
+      const featureIndex = report[1] ?? 0;
+      const functionByte = report[2] ?? 0;
+      const featureId = featureMap.get(featureIndex);
+      const id = featureId === undefined ? "0x????" : `0x${hex(featureId, 4)}`;
+      const name = featureId === undefined ? "(unmapped)" : FEATURE_NAMES[featureId] ?? "(unknown)";
+
+      /*
+       * The low nibble is the software id the request carried. Zero marks a
+       * genuine device-initiated notification. Anything else is the *reply* to
+       * a request another application made, which the receiver broadcasts to
+       * every open handle — so Logi Options+ talking to the mouse shows up
+       * here, giving a free software-level sniff of the vendor protocol.
+       * Our own requests use 0x01 and are matched as replies, not seen here.
+       */
+      const softwareId = functionByte & 0x0f;
+      const origin = softwareId === 0 ? "notify" : `swid${hex(softwareId)}`;
+
+      let decoded = "";
+      if (featureId === 0x1b04) {
+        const cid = ((report[3] ?? 0) << 8) | (report[4] ?? 0);
+        decoded = cid ? `  ← ${controlName(cid)}` : "  ← (all released)";
+      }
+
+      log(
+        `    EVENT ${id} ${name.padEnd(22)} fn 0x${hex(functionByte >> 4)} ${origin.padEnd(7)}` +
+        ` ${hexBytes(report.slice(3, 11))}${decoded}`,
+      );
+    };
+
+    log("");
+    log("  Watching. Press and hold the haptic panel, roll the wheel, click the buttons.");
+    log("  Polled lines appear only on change; EVENT lines are device-initiated.");
+    log("  Press the wheel-mode button too — that must move “ratchet CONTROL”.");
+    log("  Click “Stop watching” when done.");
+    log("");
+
+    let samples = 0;
+    while (watching) {
+      for (const target of targets) {
+        if (!watching) break;
+        try {
+          const reply = await bus.request(deviceIndex, target.featureIndex, target.fn, [], 800);
+          const payload = hexBytes(reply.slice(3, 11));
+          if (payload !== target.last) {
+            // The first read of each target is the baseline, not a change.
+            if (target.last) target.changes += 1;
+            log(`    ${target.label.padEnd(16)} ${target.last ? "→" : "  "} ${payload}`);
+            target.last = payload;
+          }
+        } catch (error) {
+          log(`    ${target.label.padEnd(16)} failed: ${error instanceof Error ? error.message : String(error)}`);
+        }
+      }
+      samples += 1;
+      await new Promise((resolve) => window.setTimeout(resolve, WATCH_INTERVAL_MS));
+    }
+
+    log("");
+    log(`Stopped after ${samples} sampling rounds, ${notifications} device-initiated report(s).`);
+    /*
+     * The control exists to tell a silent device apart from a blind watcher,
+     * and any target moving proves the watcher just as well. Firing the alarm
+     * on the control alone cried wolf on a run where the haptic line changed
+     * four times — and an alarm that is routinely wrong gets ignored when it
+     * is finally right.
+     */
+    const moved = targets.filter((target) => target.changes > 0);
+    if (!moved.length && notifications === 0) {
+      log("");
+      log("⚠ Nothing moved and no events arrived. Either nothing on the mouse was");
+      log("  touched, or the watcher is blind — in which case the flat readings in");
+      log("  this run are not evidence of anything.");
+    } else if (moved.length) {
+      log(`  proof of life: ${moved.map((target) => `${target.label} (${target.changes})`).join(", ")}`);
+    }
+  } finally {
+    bus.onNotification = null;
+    await bus.close();
+  }
+}
+
+/**
+ * Replays the one call Logi Options+ makes straight after every haptic-strength
+ * write: 0x19B0 fn 0x04, which answered `08`. The guess is that it plays a
+ * sample effect so the user feels the strength they just chose. This is a
+ * write, but a replay of observed traffic rather than an invention, and a
+ * buzz leaves nothing behind to undo.
+ */
+async function testHapticPulse(device: HIDDevice, effect: number): Promise<void> {
+  describeDevice(device);
+  const bus = new Transceiver(device);
+  await bus.open();
+
+  try {
+    const deviceIndex = await findLiveIndex(bus);
+    if (deviceIndex === null) {
+      log("  no live device index — wake the mouse and retry.");
+      return;
+    }
+    const featureIndex = await getFeatureIndex(bus, deviceIndex, 0x19b0);
+    if (!featureIndex) {
+      log("  0x19B0 HAPTIC not implemented by this device.");
+      return;
+    }
+
+    log(`  sending 0x19B0 fn 0x04 with effect 0x${hex(effect)} — hold the mouse.`);
+    try {
+      const reply = await bus.request(deviceIndex, featureIndex, 0x04, [effect]);
+      log(`  reply: ${hexBytes(reply.slice(3, 11))}`);
+      log("");
+      log("  Did you feel a buzz? That is the whole test — the reply says nothing");
+      log("  about whether the motor actually ran.");
+    } catch (error) {
+      log(`  refused: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  } finally {
+    await bus.close();
+  }
+}
+
 async function pick(filters: HIDDeviceFilter[]): Promise<void> {
   if (!navigator.hid) {
     log("WebHID is unavailable. Use Chrome or Edge on desktop over http://localhost.");
@@ -636,6 +961,73 @@ document.querySelector("#buttons")!.addEventListener("click", () => {
     }
     await dumpButtons(device);
   })().catch((error) => log(`Error: ${error}`));
+});
+
+/** Both scan buttons run the same walk; only how far it goes differs. */
+function wireScanButton(selector: string, ceiling: number): void {
+  document.querySelector(selector)!.addEventListener("click", () => {
+    void (async () => {
+      if (!navigator.hid) return;
+      const devices = await navigator.hid.getDevices();
+      const device = devices.find(hasHidppCollection);
+      resetLog();
+      if (!device) {
+        log("No authorized HID++ device yet — use “Pick a Logitech HID++ device” first.");
+        return;
+      }
+      await dumpUndocumented(device, ceiling);
+    })().catch((error) => log(`Error: ${error}`));
+  });
+}
+
+wireScanButton("#scan-safe", SAFE_FUNCTION_CEILING);
+wireScanButton("#scan-deep", DEEP_FUNCTION_CEILING);
+
+document.querySelector("#buzz")!.addEventListener("click", () => {
+  void (async () => {
+    if (!navigator.hid) return;
+    const devices = await navigator.hid.getDevices();
+    const device = devices.find(hasHidppCollection);
+    resetLog();
+    if (!device) {
+      log("No authorized HID++ device yet — use “Pick a Logitech HID++ device” first.");
+      return;
+    }
+    const effect = Number(document.querySelector<HTMLInputElement>("#buzz-effect")!.value) || 0;
+    await testHapticPulse(device, effect);
+  })().catch((error) => log(`Error: ${error}`));
+});
+
+const watchButton = document.querySelector<HTMLButtonElement>("#watch")!;
+
+watchButton.addEventListener("click", () => {
+  if (watching) {
+    watching = false;
+    watchButton.textContent = "Watch live values";
+    return;
+  }
+  void (async () => {
+    if (!navigator.hid) return;
+    const devices = await navigator.hid.getDevices();
+    const device = devices.find(hasHidppCollection);
+    resetLog();
+    if (!device) {
+      log("No authorized HID++ device yet — use “Pick a Logitech HID++ device” first.");
+      return;
+    }
+    watching = true;
+    watchButton.textContent = "Stop watching";
+    try {
+      await watchTargets(device);
+    } finally {
+      watching = false;
+      watchButton.textContent = "Watch live values";
+    }
+  })().catch((error) => {
+    watching = false;
+    watchButton.textContent = "Watch live values";
+    log(`Error: ${error}`);
+  });
 });
 
 document.querySelector("#copy")!.addEventListener("click", () => {
