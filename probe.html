@@ -15,7 +15,9 @@
   button.risky { border-color:#6b4a1e; color:#f0c887 }
   button.risky:hover:enabled { background:#2a1f10; border-color:#8a6026 }
   p.sub.warn { margin:.2rem 0 1.1rem; color:#a08a63 }
-  pre { margin:0; padding:1rem; border:1px solid #26262b; border-radius:9px; background:#0a0a0c;
+  #effect-pad { display:flex; flex-wrap:wrap; gap:.3rem; margin:0 0 1rem }
+  #effect-pad button.effect { margin:0; min-width:3.6rem; font-family:ui-monospace, Consolas, monospace }
+    pre { margin:0; padding:1rem; border:1px solid #26262b; border-radius:9px; background:#0a0a0c;
         color:#cfcfd6; font:12px/1.55 ui-monospace, "JetBrains Mono", Consolas, monospace;
         white-space:pre-wrap; word-break:break-word; min-height:16rem }
 </style>
@@ -36,6 +38,8 @@
 <button id="scan-deep" class="risky">Scan haptics &amp; force (deep)</button>
 <button id="watch">Watch live values</button>
 <button id="buzz" class="risky">Buzz test (0x19B0 fn 0x04)</button>
+<button id="sweep" class="risky">Map effect ids 0x00&ndash;0x3F</button>
+<button id="byte1" class="risky">What is reply byte 1?</button>
 <label style="font-size:.78rem;color:#85858c">effect
   <input id="buzz-effect" type="number" min="0" max="255" value="8"
          style="width:4.2rem;padding:.3rem .4rem;border:1px solid #3a3a41;border-radius:6px;
@@ -51,6 +55,12 @@
   arguments; run the safe scan first so its output records anything a write would need to
   restore.
 </p>
+
+<p class="sub" style="margin:.3rem 0 .4rem">
+  Effect pad &mdash; the 16 ids an MX Master 4 accepts, labelled by feel on hover.
+  Click any two back to back to compare them.
+</p>
+<div id="effect-pad"></div>
 
 <pre id="log">Ready. Click &ldquo;Pick a Logitech HID++ device&rdquo; and choose your receiver
 (or the mouse itself, if it is plugged in by cable or paired over Bluetooth).</pre>

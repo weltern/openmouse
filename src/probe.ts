@@ -899,6 +899,219 @@ async function testHapticPulse(device: HIDDevice, effect: number): Promise<void>
   }
 }
 
+/**
+ * How far to walk the effect ids. The device decides the real bound: an id it
+ * does not implement should be refused, so accept-versus-refuse maps the
+ * library without anyone having to feel every buzz.
+ */
+const EFFECT_SWEEP_CEILING = 0x3f;
+/** Long enough that one buzz finishes before the next starts. */
+const EFFECT_SWEEP_GAP_MS = 400;
+
+/**
+ * Plays every effect id in turn and records which the mouse accepts. Each is a
+ * transient motor pulse that leaves nothing behind, so the sweep is repeatable
+ * and needs no undo.
+ */
+async function mapHapticEffects(device: HIDDevice, ceiling: number): Promise<void> {
+  describeDevice(device);
+  const bus = new Transceiver(device);
+  await bus.open();
+
+  try {
+    const deviceIndex = await findLiveIndex(bus);
+    if (deviceIndex === null) {
+      log("  no live device index — wake the mouse and retry.");
+      return;
+    }
+    const featureIndex = await getFeatureIndex(bus, deviceIndex, 0x19b0);
+    if (!featureIndex) {
+      log("  0x19B0 HAPTIC not implemented by this device.");
+      return;
+    }
+
+    log(`  playing effect ids 0x00-0x${hex(ceiling)}, ${EFFECT_SWEEP_GAP_MS}ms apart.`);
+    log("  Hold the mouse and note which ids you actually feel — an id the mouse");
+    log("  accepts is not proof the motor ran.");
+    log("");
+
+    const accepted: number[] = [];
+    const refused: number[] = [];
+    for (let effect = 0; effect <= ceiling; effect += 1) {
+      try {
+        const reply = await bus.request(deviceIndex, featureIndex, 0x04, [effect], 1200);
+        accepted.push(effect);
+        log(`    effect 0x${hex(effect)} (${String(effect).padStart(3)})  accepted   ${hexBytes(reply.slice(3, 9))}`);
+      } catch (error) {
+        refused.push(effect);
+        const reason = error instanceof HidppError ? error.message : String(error);
+        log(`    effect 0x${hex(effect)} (${String(effect).padStart(3)})  refused — ${reason}`);
+      }
+      await new Promise((resolve) => window.setTimeout(resolve, EFFECT_SWEEP_GAP_MS));
+    }
+
+    log("");
+    log(`  accepted (${accepted.length}): ${accepted.map((id) => `0x${hex(id)}`).join(" ") || "none"}`);
+    log(`  refused  (${refused.length}): ${refused.map((id) => `0x${hex(id)}`).join(" ") || "none"}`);
+    if (!refused.length) {
+      log("");
+      log("  ⚠ Nothing was refused, so this sweep did not find the upper bound —");
+      log("    the library is either wider than the ceiling or unbounded.");
+    }
+  } finally {
+    await bus.close();
+  }
+}
+
+/**
+ * The effect ids an MX Master 4 accepts, found by sweeping 0x00-0x3F: fifteen
+ * contiguous plus one outlier at 0x1B. Everything else answers "invalid
+ * argument". Descriptions are from feeling each one on real hardware.
+ *
+ * The reply's byte 1 is deliberately NOT recorded per effect. It reports
+ * whether the motor was already busy, proven by playing 0x0B from idle and
+ * again on the heels of 0x0C: byte 1 read 0,0,0 and then 1,1,1 for the very
+ * same effect id. It first looked like a duration flag, which is backwards —
+ * 0x0E is two long vibrates and reads 0, 0x0B is three quick taps and reads 1.
+ *
+ * Note 0x00/0x01 are indistinguishable, as are 0x02/0x03/0x04, so these 16
+ * accepted ids are only 11 distinct sensations.
+ */
+const KNOWN_EFFECTS: ReadonlyArray<{ id: number; feel: string }> = [
+  { id: 0x00, feel: "double buzz, quick" },
+  { id: 0x01, feel: "double buzz, quick (same as 0x00)" },
+  { id: 0x02, feel: "single buzz, quick" },
+  { id: 0x03, feel: "single buzz, quick (same as 0x02)" },
+  { id: 0x04, feel: "single buzz, quick (same as 0x02)" },
+  { id: 0x05, feel: "4 quick buzzes then 2 quicker — a little long" },
+  { id: 0x06, feel: "long soft steady vibrate with 5 quick buzzes" },
+  { id: 0x07, feel: "one buzz then two quick" },
+  { id: 0x08, feel: "3 quick buzzes then one — the Options+ sample" },
+  { id: 0x09, feel: "2 quick buzzes then a long light vibrate" },
+  { id: 0x0a, feel: "2 quick then 3 quick" },
+  { id: 0x0b, feel: "3 quick" },
+  { id: 0x0c, feel: "3 steady buzzes about half a second apart" },
+  { id: 0x0d, feel: "1-3-1 quick buzzes then 2 quick vibrates" },
+  { id: 0x0e, feel: "two long light vibrates" },
+  { id: 0x1b, feel: "like another in this list but lighter — which one is unconfirmed" },
+];
+
+/**
+ * Settles what byte 1 of a play reply means. If it is a property of the effect
+ * it is fixed for a given id; if it reports that the motor was already busy it
+ * changes for the same id depending on what ran just before. Playing one short
+ * effect twice — once from idle, once on the heels of the longest effect in
+ * the library — separates those two readings, and needs nobody to feel a thing.
+ *
+ * Answered on a real MX Master 4: 0,0,0 from idle against 1,1,1 when chased.
+ * Kept because it is the check that would catch a firmware disagreeing.
+ */
+async function testReplyByteOne(device: HIDDevice): Promise<void> {
+  const PROBE_EFFECT = 0x0b;
+  const LONG_EFFECT = 0x0c;
+
+  describeDevice(device);
+  const bus = new Transceiver(device);
+  await bus.open();
+
+  try {
+    const deviceIndex = await findLiveIndex(bus);
+    const featureIndex = deviceIndex === null ? 0 : await getFeatureIndex(bus, deviceIndex, 0x19b0);
+    if (deviceIndex === null || !featureIndex) {
+      log("  no live device index, or no 0x19B0 on this mouse.");
+      return;
+    }
+
+    const play = async (effect: number): Promise<number> => {
+      const reply = await bus.request(deviceIndex, featureIndex, 0x04, [effect], 1200);
+      return reply[4] ?? -1;
+    };
+    const idle = (ms: number): Promise<unknown> =>
+      new Promise((resolve) => window.setTimeout(resolve, ms));
+
+    const isolated: number[] = [];
+    const chased: number[] = [];
+
+    for (let round = 0; round < 3; round += 1) {
+      await idle(2500);
+      isolated.push(await play(PROBE_EFFECT));
+
+      await idle(2500);
+      await play(LONG_EFFECT);
+      await idle(120);
+      chased.push(await play(PROBE_EFFECT));
+    }
+
+    log(`  0x${hex(PROBE_EFFECT)} from idle          → byte1 = ${isolated.join(", ")}`);
+    log(`  0x${hex(PROBE_EFFECT)} right after 0x${hex(LONG_EFFECT)} → byte1 = ${chased.join(", ")}`);
+    log("");
+
+    const steady = (values: number[]): boolean => values.every((value) => value === values[0]);
+    if (!steady(isolated) || !steady(chased)) {
+      log("  Inconclusive — the same condition gave different answers, so timing is");
+      log("  not being controlled tightly enough to read anything into it.");
+    } else if (isolated[0] === chased[0]) {
+      log(`  Byte 1 stayed ${isolated[0]} in both cases, so it is a property of the effect`);
+      log("  and not a busy flag. The duration reading is still dead; it means");
+      log("  something else about the effect itself.");
+    } else {
+      log("  Byte 1 CHANGED for the same effect id purely because of what ran");
+      log("  before it — so it reports motor state, not anything about the effect.");
+      log("  It must not be shown as an effect property anywhere.");
+    }
+  } finally {
+    await bus.close();
+  }
+}
+
+/**
+ * One button per known effect, so two of them can be compared back to back.
+ * Characterising a buzz means feeling it beside its neighbour, which a linear
+ * sweep makes impossible.
+ */
+function buildEffectPad(): void {
+  const pad = document.querySelector<HTMLElement>("#effect-pad");
+  if (!pad) return;
+
+  for (const { id, feel } of KNOWN_EFFECTS) {
+    const button = document.createElement("button");
+    button.textContent = `0x${hex(id)}`;
+    button.title = feel;
+    button.className = "effect";
+    button.addEventListener("click", () => {
+      void (async () => {
+        if (!navigator.hid) return;
+        const device = (await navigator.hid.getDevices()).find(hasHidppCollection);
+        if (!device) {
+          log("No authorized HID++ device yet — use “Pick a Logitech HID++ device” first.");
+          return;
+        }
+        const bus = new Transceiver(device);
+        await bus.open();
+        try {
+          const deviceIndex = await findLiveIndex(bus);
+          const featureIndex = deviceIndex === null
+            ? 0
+            : await getFeatureIndex(bus, deviceIndex, 0x19b0);
+          if (deviceIndex === null || !featureIndex) {
+            log("  no live device index, or no 0x19B0 on this mouse.");
+            return;
+          }
+          const reply = await bus.request(deviceIndex, featureIndex, 0x04, [id], 1200);
+          log(`  effect 0x${hex(id)} → ${hexBytes(reply.slice(3, 9))}   ${feel}`);
+        } catch (error) {
+          log(`  effect 0x${hex(id)} failed: ${error instanceof Error ? error.message : String(error)}`);
+        } finally {
+          await bus.close();
+        }
+      })().catch((error) => log(`Error: ${error}`));
+    });
+    pad.append(button);
+  }
+}
+
+buildEffectPad();
+
 async function pick(filters: HIDDeviceFilter[]): Promise<void> {
   if (!navigator.hid) {
     log("WebHID is unavailable. Use Chrome or Edge on desktop over http://localhost.");
@@ -982,6 +1195,35 @@ function wireScanButton(selector: string, ceiling: number): void {
 
 wireScanButton("#scan-safe", SAFE_FUNCTION_CEILING);
 wireScanButton("#scan-deep", DEEP_FUNCTION_CEILING);
+
+document.querySelector("#byte1")!.addEventListener("click", () => {
+  void (async () => {
+    if (!navigator.hid) return;
+    const device = (await navigator.hid.getDevices()).find(hasHidppCollection);
+    resetLog();
+    if (!device) {
+      log("No authorized HID++ device yet — use “Pick a Logitech HID++ device” first.");
+      return;
+    }
+    log("Running — about 15 seconds. Leave the mouse alone.");
+    log("");
+    await testReplyByteOne(device);
+  })().catch((error) => log(`Error: ${error}`));
+});
+
+document.querySelector("#sweep")!.addEventListener("click", () => {
+  void (async () => {
+    if (!navigator.hid) return;
+    const devices = await navigator.hid.getDevices();
+    const device = devices.find(hasHidppCollection);
+    resetLog();
+    if (!device) {
+      log("No authorized HID++ device yet — use “Pick a Logitech HID++ device” first.");
+      return;
+    }
+    await mapHapticEffects(device, EFFECT_SWEEP_CEILING);
+  })().catch((error) => log(`Error: ${error}`));
+});
 
 document.querySelector("#buzz")!.addEventListener("click", () => {
   void (async () => {
