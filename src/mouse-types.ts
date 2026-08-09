@@ -70,6 +70,10 @@ export interface MouseStatus {
    * haptic feature at all, which is every Logitech mouse but the MX Master 4.
    */
   hapticIntensity?: number | null;
+  /** Logitech 0x19B0 byte 0 bit 0 — haptic feedback on or off. */
+  hapticEnabled?: boolean | null;
+  /** Logitech 0x19B0 byte 0 bit 1 — the mouse's own haptic battery saver. */
+  hapticBatterySaving?: boolean | null;
   /** Logitech 0x2121: high-resolution (smooth) scrolling. */
   hiResScroll?: boolean | null;
   invertScroll?: boolean | null;

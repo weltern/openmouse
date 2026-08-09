@@ -507,3 +507,47 @@ test("a mouse without 0x19B0 refuses to buzz rather than writing to feature 0", 
   await assert.rejects(() => client.playHapticEffect(), /no haptic feature/);
   assert.deepEqual(device.hapticEffectsPlayed, []);
 });
+
+test("the haptic flag byte is read as two independent bits", async () => {
+  for (const [flags, enabled, saving] of [[0x03, true, true], [0x02, false, true], [0x01, true, false], [0x00, false, false]] as const) {
+    const { client } = await connectClient({ haptic: { companion: flags, intensity: 60 } });
+    const status = await client.readStatus();
+    assert.equal(status.hapticEnabled, enabled, `flags 0x0${flags} enabled`);
+    assert.equal(status.hapticBatterySaving, saving, `flags 0x0${flags} batterySaving`);
+  }
+});
+
+test("toggling haptics on and off leaves battery saving and strength alone", async () => {
+  const { client, device } = await connectClient({ haptic: { companion: 0x03, intensity: 45 } });
+  assert.equal(await client.setHapticEnabled(false), false);
+  assert.equal(device.haptic.companion, 0x02, "battery-saving bit was cleared too");
+  assert.equal(device.haptic.intensity, 45, "strength was clobbered by a flag write");
+
+  assert.equal(await client.setHapticEnabled(true), true);
+  assert.equal(device.haptic.companion, 0x03);
+});
+
+test("toggling battery saving leaves the enabled bit and strength alone", async () => {
+  const { client, device } = await connectClient({ haptic: { companion: 0x03, intensity: 100 } });
+  assert.equal(await client.setHapticBatterySaving(false), false);
+  assert.equal(device.haptic.companion, 0x01, "the enabled bit was cleared too");
+  assert.equal(device.haptic.intensity, 100);
+
+  assert.equal(await client.setHapticBatterySaving(true), true);
+  assert.equal(device.haptic.companion, 0x03);
+});
+
+test("setting strength preserves whatever flags the mouse currently has", async () => {
+  const { client, device } = await connectClient({ haptic: { companion: 0x01, intensity: 60 } });
+  await client.setHapticIntensity(25);
+  assert.equal(device.haptic.companion, 0x01, "a strength write must not resurrect a cleared flag");
+  assert.equal(device.haptic.intensity, 25);
+});
+
+test("unknown bits of the haptic flag byte survive a write", async () => {
+  // Firmware may use bits nobody here has identified; clearing them silently
+  // would discard a setting this app never even displayed.
+  const { client, device } = await connectClient({ haptic: { companion: 0x83, intensity: 60 } });
+  await client.setHapticEnabled(false);
+  assert.equal(device.haptic.companion, 0x82, "bit 7 was dropped by a flag write");
+});

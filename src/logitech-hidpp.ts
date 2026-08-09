@@ -77,12 +77,16 @@ const WHEEL_MODE_BIT = { divert: 0x01, hiRes: 0x02, invert: 0x04 } as const;
  * each one read straight back by the getter, and 60 is also what fn 0x00
  * reports as the device default.
  *
- * Byte 0 held 0x03 across every one of those writes and is deliberately left
- * unnamed — nothing has demonstrated what it controls, so writes read the pair
- * and preserve it rather than guessing. Naming a byte from inferred behaviour
- * is exactly how the SmartShift controls got mislabelled the first time.
+ * Byte 0 is a flag bitmask, established the same way — by watching which bit
+ * moved as each Options+ switch was flipped. Turning haptics off cleared bit
+ * 0; turning battery saving off cleared bit 1; both went back on together as
+ * 0x03. Options+'s per-context switches (Actions Ring, Gestures, Switch
+ * Screens) moved no device byte at all, so those are decided in its software
+ * rather than in the mouse.
  */
 const HAPTIC_PRESETS = { Subtle: 25, Low: 45, Medium: 60, High: 100 } as const;
+
+const HAPTIC_FLAG = { enabled: 0x01, batterySaving: 0x02 } as const;
 
 export type HapticPreset = keyof typeof HAPTIC_PRESETS;
 
@@ -94,10 +98,19 @@ const HAPTIC_INTENSITY_MAX = HAPTIC_PRESETS.High;
 /**
  * 0x19B0 fn 0x04 fires the haptic motor. Confirmed on a real MX Master 4:
  * Logi Options+ calls it straight after every strength write, and replaying
- * that call produced a buzz you can feel. Effect 8 is the sample it uses; what
- * the other effect ids do is unexplored.
+ * that call produced a buzz you can feel.
+ *
+ * It picks a different effect per action, which these mirror rather than
+ * invent: the reply echoed 0x08 after every strength write and 0x00 after
+ * re-enabling haptics. The device accepts 0x00-0x0E and 0x1B, though several
+ * of those are indistinguishable by hand.
  */
-const HAPTIC_SAMPLE_EFFECT = 0x08;
+const HAPTIC_EFFECT = { strengthSample: 0x08, enableConfirmation: 0x00 } as const;
+
+export const HAPTIC_EFFECTS: Readonly<Record<"strengthSample" | "enableConfirmation", number>> =
+  HAPTIC_EFFECT;
+
+const HAPTIC_SAMPLE_EFFECT = HAPTIC_EFFECT.strengthSample;
 
 export type LogitechMouseStatus = MouseStatus;
 
@@ -290,7 +303,7 @@ export class LogitechHidppClient {
       : null;
     const profileState = await this.readProfileState(profilesFeature.index);
     const wheel = await this.readWheelState();
-    const hapticIntensity = await this.readHapticIntensity();
+    const haptic = await this.readHapticState();
     const firmware = this.firmwareCache ?? (this.firmwareCache = await this.readFirmware(firmwareFeature.index));
 
     return {
@@ -323,7 +336,9 @@ export class LogitechHidppClient {
       wheelRatchetEngaged: wheel.wheelRatchetEngaged,
       thumbWheelInverted: wheel.thumbWheelInverted,
       supportsThumbWheelInvert: wheel.supportsThumbWheelInvert,
-      hapticIntensity,
+      hapticIntensity: haptic.intensity,
+      hapticEnabled: haptic.enabled,
+      hapticBatterySaving: haptic.batterySaving,
       unitId: identity.unitId,
       modelId: identity.modelId,
       transportIds: identity.transportIds,
@@ -505,37 +520,80 @@ export class LogitechHidppClient {
   }
 
   /**
-   * Haptic strength, or null when the mouse has no 0x19B0 feature. The reply's
-   * byte 1 is the live value; byte 0 is carried untouched into any later write.
+   * The whole 0x19B0 pair, or nulls when the mouse has no haptic feature.
+   * Byte 0 is the flag bitmask, byte 1 the strength.
    */
-  private async readHapticIntensity(): Promise<number | null> {
+  private async readHapticState(): Promise<{
+    intensity: number | null;
+    enabled: boolean | null;
+    batterySaving: boolean | null;
+  }> {
     const feature = await this.getFeature(FEATURE.haptic);
-    if (!feature.index) return null;
+    if (!feature.index) return { intensity: null, enabled: null, batterySaving: null };
+
     const reply = await this.request(feature.index, 0x10);
-    return reply[4] ?? null;
+    const flags = reply[3] ?? 0;
+    return {
+      intensity: reply[4] ?? null,
+      enabled: (flags & HAPTIC_FLAG.enabled) !== 0,
+      batterySaving: (flags & HAPTIC_FLAG.batterySaving) !== 0,
+    };
   }
 
   /**
-   * Sets the haptic strength. 0x19B0 writes carry both bytes, so the current
-   * pair is read first and only byte 1 is changed — the same discipline 0x2111
-   * needs, and for the same reason: a write that zeroes its companion byte
-   * silently discards a setting it was never asked to touch.
+   * 0x19B0 writes carry both bytes, so every setter reads the pair first and
+   * changes only its own field — the same discipline 0x2111 needs, and for the
+   * same reason: a write that zeroes its companion silently discards a setting
+   * it was never asked to touch. Bits of byte 0 beyond the two known flags are
+   * carried through untouched for exactly that reason.
    */
+  private async writeHaptic(
+    change: { flagMask?: number; flagOn?: boolean; intensity?: number },
+  ): Promise<{ flags: number; intensity: number }> {
+    const feature = await this.getFeature(FEATURE.haptic);
+    if (!feature.index) throw new Error("This mouse has no haptic feature.");
+
+    const current = await this.request(feature.index, 0x10);
+    let flags = current[3] ?? 0;
+    if (change.flagMask !== undefined) {
+      flags = change.flagOn ? flags | change.flagMask : flags & ~change.flagMask;
+    }
+    const intensity = change.intensity ?? current[4] ?? 0;
+
+    const confirmed = await this.request(feature.index, 0x20, flags, intensity);
+    return { flags: confirmed[3] ?? -1, intensity: confirmed[4] ?? -1 };
+  }
+
+  /** Sets the haptic strength, leaving the flag byte as the mouse reports it. */
   async setHapticIntensity(intensity: number): Promise<number> {
     const value = Math.round(intensity);
     if (!Number.isFinite(value) || value < 0 || value > HAPTIC_INTENSITY_MAX) {
       throw new Error(`Haptic intensity must be between 0 and ${HAPTIC_INTENSITY_MAX}.`);
     }
 
-    const feature = await this.getFeature(FEATURE.haptic);
-    if (!feature.index) throw new Error("This mouse has no haptic feature.");
+    const confirmed = await this.writeHaptic({ intensity: value });
+    if (confirmed.intensity !== value) {
+      throw new Error(`The mouse kept a haptic intensity of ${confirmed.intensity}.`);
+    }
+    return confirmed.intensity;
+  }
 
-    const current = await this.request(feature.index, 0x10);
-    const confirmed = await this.request(feature.index, 0x20, current[3] ?? 0, value);
+  /** Turns haptic feedback on or off, preserving the strength and other flags. */
+  async setHapticEnabled(enabled: boolean): Promise<boolean> {
+    const confirmed = await this.writeHaptic({ flagMask: HAPTIC_FLAG.enabled, flagOn: enabled });
+    const applied = (confirmed.flags & HAPTIC_FLAG.enabled) !== 0;
+    if (applied !== enabled) {
+      throw new Error(`The mouse kept haptics ${applied ? "on" : "off"}.`);
+    }
+    return applied;
+  }
 
-    const applied = confirmed[4] ?? -1;
-    if (applied !== value) {
-      throw new Error(`The mouse kept a haptic intensity of ${applied}.`);
+  /** Turns the haptic battery-saving mode on or off. */
+  async setHapticBatterySaving(enabled: boolean): Promise<boolean> {
+    const confirmed = await this.writeHaptic({ flagMask: HAPTIC_FLAG.batterySaving, flagOn: enabled });
+    const applied = (confirmed.flags & HAPTIC_FLAG.batterySaving) !== 0;
+    if (applied !== enabled) {
+      throw new Error(`The mouse kept battery saving ${applied ? "on" : "off"}.`);
     }
     return applied;
   }
