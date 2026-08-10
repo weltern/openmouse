@@ -47,6 +47,7 @@ const FEATURE = {
   hiresWheel: 0x2121,
   thumbWheel: 0x2150,
   haptic: 0x19b0,
+  friendlyName: 0x0007,
   hostsInfo: 0x1815,
   changeHost: 0x1814,
   reprogControls: 0x1b04,
@@ -307,6 +308,7 @@ export class LogitechHidppClient {
     const wheel = await this.readWheelState();
     const haptic = await this.readHapticState();
     const hosts = await this.readHostState();
+    const friendly = await this.readFriendlyName();
     const firmware = this.firmwareCache ?? (this.firmwareCache = await this.readFirmware(firmwareFeature.index));
 
     return {
@@ -345,6 +347,8 @@ export class LogitechHidppClient {
       hostCount: hosts.hostCount,
       currentHost: hosts.currentHost,
       hostSlotsPaired: hosts.hostSlotsPaired,
+      friendlyName: friendly.name,
+      friendlyNameMaxLength: friendly.maxLength,
       unitId: identity.unitId,
       modelId: identity.modelId,
       transportIds: identity.transportIds,
@@ -602,6 +606,77 @@ export class LogitechHidppClient {
       throw new Error(`The mouse kept battery saving ${applied ? "on" : "off"}.`);
     }
     return applied;
+  }
+
+  /**
+   * The editable name the mouse presents to a host, separate from the fixed
+   * 0x0005 device name. fn 0x00 answers [currentLength, maxLength, ...]; on an
+   * MX Master 4 that is 11 of a maximum 14, holding "MX Master 4".
+   *
+   * fn 0x01 returns the name in chunks headed by the offset that was asked
+   * for, so the text starts one byte into the payload.
+   */
+  private async readFriendlyName(): Promise<{ name: string | null; maxLength: number | null }> {
+    const feature = await this.getFeature(FEATURE.friendlyName);
+    if (!feature.index) return { name: null, maxLength: null };
+
+    const info = await this.request(feature.index, 0x00);
+    const length = info[3] ?? 0;
+    const maxLength = info[4] ?? 0;
+    if (!length) return { name: "", maxLength: maxLength || null };
+
+    const characters: number[] = [];
+    while (characters.length < length) {
+      const chunk = await this.request(feature.index, 0x10, characters.length);
+      const text = chunk.slice(4, 4 + Math.min(15, length - characters.length));
+      if (!text.length) break;
+      characters.push(...text);
+    }
+    return {
+      name: new TextDecoder().decode(new Uint8Array(characters)).replace(/\0/g, "").trim(),
+      maxLength: maxLength || null,
+    };
+  }
+
+  /**
+   * Renames the mouse. fn 0x03 takes an offset followed by characters and
+   * answers with how many it accepted, so a name longer than one report is
+   * written in passes until the device stops taking them.
+   *
+   * The caller is expected to have the old name from readStatus, since undoing
+   * this means writing that string back and nothing else records it.
+   */
+  async setFriendlyName(name: string): Promise<string> {
+    const feature = await this.getFeature(FEATURE.friendlyName);
+    if (!feature.index) throw new Error("This mouse cannot be renamed.");
+
+    const info = await this.request(feature.index, 0x00);
+    const maxLength = info[4] ?? 0;
+    const bytes = [...new TextEncoder().encode(name.trim())];
+    if (!bytes.length) throw new Error("A name cannot be empty.");
+    if (bytes.length > maxLength) {
+      throw new Error(`This mouse allows at most ${maxLength} characters.`);
+    }
+    if (bytes.some((byte) => byte < 0x20 || byte > 0x7e)) {
+      throw new Error("A name may only contain plain ASCII characters.");
+    }
+
+    let written = 0;
+    while (written < bytes.length) {
+      const chunk = bytes.slice(written, written + 15);
+      const reply = await this.requestLong(feature.index, 0x30, [written, ...chunk]);
+      const accepted = reply[3] ?? 0;
+      if (accepted <= written) {
+        throw new Error("The mouse stopped accepting the new name.");
+      }
+      written = accepted;
+    }
+
+    const confirmed = await this.readFriendlyName();
+    if (confirmed.name !== name.trim()) {
+      throw new Error(`The mouse kept the name "${confirmed.name ?? ""}".`);
+    }
+    return confirmed.name;
   }
 
   /**

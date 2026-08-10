@@ -19,6 +19,7 @@ const FEATURE_INDEX = {
   haptic: 0x0b,
   hostsInfo: 0x0f,
   changeHost: 0x0e,
+  friendlyName: 0x07,
 } as const;
 
 /** Feature id -> index, mirroring the table an MX Master 4 reports. */
@@ -34,6 +35,7 @@ const MX_MASTER_4_FEATURES = new Map<number, number>([
   [0x19b0, FEATURE_INDEX.haptic],
   [0x1815, FEATURE_INDEX.hostsInfo],
   [0x1814, FEATURE_INDEX.changeHost],
+  [0x0007, FEATURE_INDEX.friendlyName],
 ]);
 
 interface FakeDeviceOptions {
@@ -49,6 +51,9 @@ interface FakeDeviceOptions {
   haptic?: { companion: number; intensity: number };
   hosts?: boolean[];
   currentHost?: number;
+  friendlyName?: string;
+  /** False to model firmware that acknowledges a rename but ignores it. */
+  namePersists?: boolean;
 }
 
 /**
@@ -80,6 +85,8 @@ class FakeHidDevice implements Partial<HIDDevice> {
   currentHost: number;
   /** Slots the client actually told the mouse to move to. */
   readonly switchedTo: number[] = [];
+  friendlyName: string;
+  private readonly namePersists: boolean;
   /** Effect ids the client asked the motor to play, in order. */
   readonly hapticEffectsPlayed: number[] = [];
   /** Changes between reads, standing in for a value the cache must not freeze. */
@@ -97,6 +104,8 @@ class FakeHidDevice implements Partial<HIDDevice> {
     this.haptic = options.haptic ?? { companion: 0x03, intensity: 60 };
     this.hosts = options.hosts ?? [true, true, false];
     this.currentHost = options.currentHost ?? 0;
+    this.friendlyName = options.friendlyName ?? "MX Master 4";
+    this.namePersists = options.namePersists ?? true;
   }
 
   async open(): Promise<void> {
@@ -199,6 +208,25 @@ class FakeHidDevice implements Partial<HIDDevice> {
         }
         if (functionByte === (0x30 | SOFTWARE_ID)) return ok(0x01);
         return ok(this.wheelMode);
+
+      case FEATURE_INDEX.friendlyName: {
+        const encoded = [...this.friendlyName].map((c) => c.charCodeAt(0));
+        if (functionByte === (0x00 | SOFTWARE_ID)) return ok(encoded.length, 14);
+        if (functionByte === (0x10 | SOFTWARE_ID)) {
+          const offset = parameters[0];
+          return ok(offset, ...encoded.slice(offset, offset + 15));
+        }
+        if (functionByte === (0x30 | SOFTWARE_ID)) {
+          const offset = parameters[0];
+          const chars = parameters.slice(1).filter((b) => b !== 0);
+          const kept = [...encoded.slice(0, offset), ...chars];
+          // Firmware that acknowledges a write and keeps its old value is the
+          // whole reason setFriendlyName reads the name back afterwards.
+          if (this.namePersists) this.friendlyName = String.fromCharCode(...kept);
+          return ok(kept.length);
+        }
+        return this.error(deviceIndex, featureIndex, functionByte);
+      }
 
       case FEATURE_INDEX.changeHost:
         if (functionByte === (0x10 | SOFTWARE_ID)) {
@@ -648,4 +676,46 @@ test("a mouse without Easy-Switch refuses to switch rather than writing blind", 
   const { client, device } = await connectClient({ features });
   await assert.rejects(() => client.setHost(1), /does not report Easy-Switch/);
   assert.deepEqual(device.switchedTo, []);
+});
+
+test("the friendly name and its limit are read from 0x0007", async () => {
+  const { client } = await connectClient();
+  const status = await client.readStatus();
+  assert.equal(status.friendlyName, "MX Master 4");
+  assert.equal(status.friendlyNameMaxLength, 14);
+});
+
+test("renaming writes the new name and confirms it from the mouse", async () => {
+  const { client, device } = await connectClient();
+  assert.equal(await client.setFriendlyName("Desk mouse"), "Desk mouse");
+  assert.equal(device.friendlyName, "Desk mouse");
+});
+
+test("a name longer than the mouse allows is refused before anything is written", async () => {
+  const { client, device } = await connectClient();
+  await assert.rejects(() => client.setFriendlyName("A".repeat(15)), /at most 14/);
+  assert.equal(device.friendlyName, "MX Master 4", "an over-long name still reached the mouse");
+});
+
+test("an empty or non-ASCII name is refused", async () => {
+  const { client, device } = await connectClient();
+  await assert.rejects(() => client.setFriendlyName("   "), /cannot be empty/);
+  await assert.rejects(() => client.setFriendlyName("Maus ü"), /plain ASCII/);
+  assert.equal(device.friendlyName, "MX Master 4");
+});
+
+test("a mouse without 0x0007 reports no name and refuses to rename", async () => {
+  const features = new Map(MX_MASTER_4_FEATURES);
+  features.delete(0x0007);
+  const { client } = await connectClient({ features });
+  const status = await client.readStatus();
+  assert.equal(status.friendlyName, null);
+  await assert.rejects(() => client.setFriendlyName("Nope"), /cannot be renamed/);
+});
+
+test("a rename the mouse acknowledges but ignores is reported as a failure", async () => {
+  // Without the read-back, this device would look like a successful rename.
+  const { client, device } = await connectClient({ namePersists: false });
+  await assert.rejects(() => client.setFriendlyName("Desk mouse"), /kept the name "MX Master 4"/);
+  assert.equal(device.friendlyName, "MX Master 4");
 });

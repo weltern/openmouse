@@ -80,6 +80,9 @@ export interface MouseStatus {
   currentHost?: number | null;
   /** One entry per slot, true when a computer is paired to it. */
   hostSlotsPaired?: boolean[] | null;
+  /** Logitech 0x0007 — the editable name, distinct from the fixed device name. */
+  friendlyName?: string | null;
+  friendlyNameMaxLength?: number | null;
   /** Logitech 0x2121: high-resolution (smooth) scrolling. */
   hiResScroll?: boolean | null;
   invertScroll?: boolean | null;
