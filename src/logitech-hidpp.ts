@@ -48,6 +48,7 @@ const FEATURE = {
   thumbWheel: 0x2150,
   haptic: 0x19b0,
   hostsInfo: 0x1815,
+  changeHost: 0x1814,
   reprogControls: 0x1b04,
   extendedDpi: 0x2202,
   extendedReportRate: 0x8061,
@@ -641,6 +642,43 @@ export class LogitechHidppClient {
       }
     }
     return { hostCount, currentHost, hostSlotsPaired };
+  }
+
+  /**
+   * Sends the mouse to another Easy-Switch slot via 0x1814 fn 0x01.
+   *
+   * This deliberately disconnects the mouse from this computer, so it is the
+   * one call here that cannot report its own success — the device is gone
+   * before any confirmation could arrive. Callers must treat a resolved
+   * promise as "the command was sent", never as "it worked".
+   *
+   * Refuses an empty slot outright. Switching into a slot with no computer
+   * paired leaves the mouse unreachable until someone presses the button on
+   * its underside, and no warning text makes that an acceptable thing to let
+   * a misclick do.
+   */
+  async setHost(hostIndex: number): Promise<void> {
+    const state = await this.readHostState();
+    if (state.hostCount === null || state.currentHost === null) {
+      throw new Error("This mouse does not report Easy-Switch hosts.");
+    }
+    if (!Number.isInteger(hostIndex) || hostIndex < 0 || hostIndex >= state.hostCount) {
+      throw new Error(`Computer ${hostIndex + 1} is not one of this mouse's ${state.hostCount} slots.`);
+    }
+    if (hostIndex === state.currentHost) {
+      throw new Error("The mouse is already connected to that computer.");
+    }
+    if (state.hostSlotsPaired?.[hostIndex] !== true) {
+      throw new Error(
+        `Computer ${hostIndex + 1} has nothing paired to it. Switching there would leave the mouse `
+        + "unreachable until you press the button underneath it.",
+      );
+    }
+
+    const changeHost = await this.getFeature(FEATURE.changeHost);
+    if (!changeHost.index) throw new Error("This mouse has no 0x1814 CHANGE HOST feature.");
+
+    await this.request(changeHost.index, 0x10, hostIndex);
   }
 
   /**

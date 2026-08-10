@@ -312,7 +312,7 @@ function renderControl(): void {
           <article class="setting-card dpi-card"><div class="setting-heading"><div><p>DPI</p><h2>Sensitivity</h2></div><div class="dpi-header-actions"><input id="dpi-output" type="text" inputmode="numeric" value="— DPI" aria-label="DPI value" readonly /><button id="custom-dpi" type="button" disabled>Custom</button></div></div><div id="dpi-presets" class="segmented dpi-presets" aria-label="Common DPI values"></div><div id="logitech-axis-controls" style="display:none;margin-top:.6rem;padding-top:.6rem;border-top:1px solid #29292d"><div style="display:grid;grid-template-columns:1fr 1fr auto;gap:.45rem;align-items:end"><label style="color:#77777c;font-size:.6rem">X axis<input id="logitech-dpi-x" type="number" min="100" step="50" style="width:100%;box-sizing:border-box;margin-top:.2rem;padding:.42rem;border:1px solid #343438;border-radius:6px;background:#171719;color:#eee" /></label><label style="color:#77777c;font-size:.6rem">Y axis<input id="logitech-dpi-y" type="number" min="100" step="50" style="width:100%;box-sizing:border-box;margin-top:.2rem;padding:.42rem;border:1px solid #343438;border-radius:6px;background:#171719;color:#eee" /></label><button id="apply-logitech-axes" type="button" style="padding:.45rem .6rem;border:1px solid #45454a;border-radius:6px;background:#202023;color:#ececef;font-size:.62rem">Apply</button></div></div><div class="setting-action"><span id="dpi-pending">Choose a DPI value</span></div></article>
           <article class="setting-card"><div class="setting-heading"><div><p>POLLING RATE</p><h2>Report frequency</h2></div></div><div class="segmented rate-options"><button data-rate="125" disabled>125</button><button data-rate="250" disabled>250</button><button data-rate="500" disabled>500</button><button data-rate="1000" disabled>1K</button><button data-rate="2000" disabled>2K</button><button data-rate="4000" disabled>4K</button><button data-rate="8000" disabled>8K</button></div><small id="polling-note" class="setting-note">Higher rates update cursor movement more often, but use more battery.</small></article>
           <article class="setting-card"><div class="setting-heading"><div><p>SENSOR</p><h2>Lift-off distance</h2></div></div><div id="generic-lod-options" class="segmented three"><button data-lod="Low" disabled>0.7 mm</button><button data-lod="Medium" disabled>1 mm</button><button data-lod="High" disabled>2 mm</button></div><select id="egg-lod-select" hidden style="width:100%;padding:.48rem;border:1px solid #343438;border-radius:6px;background:#171719;color:#eee"></select><small class="setting-note">Controls how far you can lift the mouse before tracking stops. Higher values keep tracking a little longer.</small></article>
-          <article id="wheel-settings" class="setting-card" style="display:none"><div class="setting-heading"><div><p>SCROLL WHEEL</p><h2>Ratchet &amp; scrolling</h2></div><output id="wheel-ratchet-state" style="color:#8b8b90;font-size:.6rem">—</output></div><div id="wheel-mode-options" class="segmented"><button data-wheelmode="Freespin" disabled>Free-spin</button><button data-wheelmode="Ratchet" disabled>Ratchet</button></div><div id="smartshift-row" style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>SmartShift</span><button id="smartshift-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><label id="smartshift-threshold-row" style="display:block;color:#77777c;font-size:.6rem">Threshold <output id="smartshift-threshold-value">—</output><input id="smartshift-threshold" type="range" min="10" max="75" step="1" disabled style="width:100%;margin-top:.25rem" /></label><small class="setting-note" style="margin-top:.1rem">Lower releases the ratchet on a gentler flick.</small></div><div style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>High-resolution scrolling</span><button id="hires-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="invert-scroll-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert scroll direction</span><button id="invert-scroll-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="thumbwheel-invert-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert thumb wheel</span><button id="thumbwheel-invert-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div></div></article><article id="haptic-settings" class="setting-card" style="display:none"><div class="setting-heading"><div><p>HAPTICS</p><h2>Feedback strength</h2></div><output id="haptic-value" style="color:#8b8b90;font-size:.6rem">&mdash;</output></div><div id="haptic-options" class="segmented"><button data-haptic="Subtle" disabled>Subtle</button><button data-haptic="Low" disabled>Low</button><button data-haptic="Medium" disabled>Medium</button><button data-haptic="High" disabled>High</button></div><small class="setting-note" style="margin-top:.45rem">How firmly the mouse buzzes. Medium is the factory setting.</small><div style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Haptic feedback</span><button id="haptic-enabled-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Battery saving</span><button id="haptic-battery-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div></div></article><article id="host-settings" class="setting-card" style="display:none"><div class="setting-heading"><div><p>EASY-SWITCH</p><h2>Connected computer</h2></div><output id="host-current" style="color:#8b8b90;font-size:.6rem">&mdash;</output></div><div id="host-slots" style="display:flex;gap:.35rem;flex-wrap:wrap"></div><small class="setting-note" style="margin-top:.45rem">Press the button underneath the mouse to switch. These numbers match the mouse&rsquo;s own indicator.</small></article>
+          <article id="wheel-settings" class="setting-card" style="display:none"><div class="setting-heading"><div><p>SCROLL WHEEL</p><h2>Ratchet &amp; scrolling</h2></div><output id="wheel-ratchet-state" style="color:#8b8b90;font-size:.6rem">—</output></div><div id="wheel-mode-options" class="segmented"><button data-wheelmode="Freespin" disabled>Free-spin</button><button data-wheelmode="Ratchet" disabled>Ratchet</button></div><div id="smartshift-row" style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>SmartShift</span><button id="smartshift-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><label id="smartshift-threshold-row" style="display:block;color:#77777c;font-size:.6rem">Threshold <output id="smartshift-threshold-value">—</output><input id="smartshift-threshold" type="range" min="10" max="75" step="1" disabled style="width:100%;margin-top:.25rem" /></label><small class="setting-note" style="margin-top:.1rem">Lower releases the ratchet on a gentler flick.</small></div><div style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>High-resolution scrolling</span><button id="hires-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="invert-scroll-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert scroll direction</span><button id="invert-scroll-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div id="thumbwheel-invert-row" style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Invert thumb wheel</span><button id="thumbwheel-invert-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div></div></article><article id="haptic-settings" class="setting-card" style="display:none"><div class="setting-heading"><div><p>HAPTICS</p><h2>Feedback strength</h2></div><output id="haptic-value" style="color:#8b8b90;font-size:.6rem">&mdash;</output></div><div id="haptic-options" class="segmented"><button data-haptic="Subtle" disabled>Subtle</button><button data-haptic="Low" disabled>Low</button><button data-haptic="Medium" disabled>Medium</button><button data-haptic="High" disabled>High</button></div><small class="setting-note" style="margin-top:.45rem">How firmly the mouse buzzes. Medium is the factory setting.</small><div style="margin-top:.6rem;padding-top:.55rem;border-top:1px solid #29292d"><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Haptic feedback</span><button id="haptic-enabled-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div><div style="display:flex;justify-content:space-between;align-items:center;gap:.5rem;padding:.22rem 0;color:#b3b3b7;font-size:.66rem"><span>Battery saving</span><button id="haptic-battery-toggle" type="button" role="switch" aria-checked="false" disabled style="min-width:42px;padding:.2rem .45rem;border:1px solid #3a3a3f;border-radius:999px;background:#202023;color:#8b8b90;font-size:.58rem">Off</button></div></div></article><article id="host-settings" class="setting-card" style="display:none"><div class="setting-heading"><div><p>EASY-SWITCH</p><h2>Connected computer</h2></div><output id="host-current" style="color:#8b8b90;font-size:.6rem">&mdash;</output></div><div id="host-slots" style="display:flex;gap:.35rem;flex-wrap:wrap"></div><div id="host-confirm" hidden style="margin-top:.55rem;padding:.55rem .65rem;border:1px solid #5c4a2a;border-radius:7px;background:#241f16"><p id="host-confirm-text" style="margin:0 0 .5rem;color:#e2c489;font-size:.64rem;line-height:1.45"></p><div style="display:flex;gap:.4rem"><button id="host-confirm-go" type="button" style="padding:.32rem .6rem;border:1px solid #7a6234;border-radius:6px;background:#2e2718;color:#f0d9a4;font-size:.62rem">Switch anyway</button><button id="host-confirm-cancel" type="button" style="padding:.32rem .6rem;border:1px solid #3a3a3f;border-radius:6px;background:#202023;color:#b3b3b7;font-size:.62rem">Cancel</button></div></div><small class="setting-note" style="margin-top:.45rem">Numbered to match the mouse&rsquo;s own indicator. Empty slots cannot be selected. The button underneath the mouse switches it back.</small></article>
           <article id="button-settings" class="setting-card" style="display:none;grid-column:1/-1"><div class="setting-heading"><div><p>BUTTONS</p><h2>Remapping</h2></div></div><div id="button-list" style="display:grid;grid-template-columns:repeat(auto-fit,minmax(240px,1fr));gap:.55rem"></div><div style="display:flex;flex-wrap:wrap;gap:.4rem;margin-top:.6rem"><button id="refresh-buttons" type="button" style="padding:.45rem .7rem;border:1px solid #3a3a41;border-radius:6px;background:#1c1c20;color:#d8d8dc;font-size:.64rem">Re-read from mouse</button><button id="reclaim-buttons" type="button" hidden style="padding:.45rem .7rem;border:1px solid #5c4a2a;border-radius:6px;background:#241f16;color:#e2c489;font-size:.64rem">Restore buttons to hardware control</button></div><small id="button-note" class="setting-note">Each button can be made to act as another button on this mouse.</small></article>
         </section>
         <section id="logitech-device-details" class="device-data" style="display:none;margin-top:.65rem">
@@ -430,6 +430,14 @@ function renderControl(): void {
     const enabled = (event.currentTarget as HTMLButtonElement).getAttribute("aria-checked") !== "true";
     void applyLogitechSetting(`${enabled ? "Enabling" : "Disabling"} haptic battery saving`,
       (client) => client.setHapticBatterySaving(enabled));
+  });
+
+  document.querySelector<HTMLButtonElement>("#host-confirm-go")?.addEventListener("click", () => {
+    void switchHost();
+  });
+
+  document.querySelector<HTMLButtonElement>("#host-confirm-cancel")?.addEventListener("click", () => {
+    cancelSwitchHost();
   });
 
   document.querySelector<HTMLButtonElement>("#reclaim-buttons")?.addEventListener("click", () => {
@@ -1186,29 +1194,102 @@ function renderHostSettings(status: MouseStatus): void {
   const { hostCount, currentHost, hostSlotsPaired } = status;
   const known = hostCount != null && currentHost != null;
   card.style.display = known ? "" : "none";
-  if (!known) return;
+  if (!known) {
+    // A pending confirmation must not survive the device going away, or it
+    // would reappear pointing at a slot from a mouse that is no longer here.
+    cancelSwitchHost();
+    return;
+  }
 
   const slots = document.querySelector<HTMLElement>("#host-slots");
   if (slots) {
     slots.replaceChildren(...Array.from({ length: hostCount }, (_unused, index) => {
       const active = index === currentHost;
       const paired = hostSlotsPaired?.[index] === true;
-      const pill = document.createElement("span");
+      /*
+       * Only a paired slot that is not the current one is a button. An empty
+       * slot is rendered as a plain span so it cannot be clicked at all —
+       * switching there strands the mouse until someone reaches underneath it,
+       * and that is not a thing a warning dialog should be allowed to permit.
+       */
+      const switchable = paired && !active;
+      const pill = document.createElement(switchable ? "button" : "span");
       pill.textContent = String(index + 1);
-      pill.title = active ? "This computer" : paired ? "Another computer is paired here" : "Empty slot";
+      pill.title = active
+        ? "This computer"
+        : paired ? `Switch the mouse to computer ${index + 1}` : "Empty slot — nothing paired here";
       pill.style.cssText = [
-        "min-width:1.9rem", "text-align:center", "padding:.24rem .5rem",
+        "min-width:1.9rem", "text-align:center", "padding:.24rem .5rem", "margin:0",
         "border-radius:6px", "font-size:.66rem",
         `border:1px solid ${active ? "rgb(105 210 141 / 55%)" : paired ? "#3a3a3f" : "#2b2b30"}`,
         `background:${active ? "rgb(105 210 141 / 12%)" : "#202023"}`,
         `color:${active ? "#8be3a9" : paired ? "#b3b3b7" : "#6a6a70"}`,
+        switchable ? "cursor:pointer" : "cursor:default",
       ].join(";");
+      if (switchable) {
+        (pill as HTMLButtonElement).type = "button";
+        pill.addEventListener("click", () => askToSwitchHost(index));
+      }
       return pill;
     }));
   }
 
   const pairedCount = hostSlotsPaired?.filter(Boolean).length ?? 0;
   setText("#host-current", `On ${currentHost + 1} of ${hostCount} · ${pairedCount} paired`);
+}
+
+/**
+ * Two-step confirmation, in the card rather than a browser dialog. The message
+ * states what will actually happen and how to undo it, because "Are you sure?"
+ * tells someone nothing they can weigh.
+ */
+function askToSwitchHost(hostIndex: number): void {
+  const confirmRow = document.querySelector<HTMLElement>("#host-confirm");
+  const message = document.querySelector<HTMLElement>("#host-confirm-text");
+  if (!confirmRow || !message) return;
+
+  message.textContent =
+    `Send the mouse to computer ${hostIndex + 1}? It will disconnect from this computer straight away. `
+    + "To bring it back, press the button underneath the mouse.";
+  confirmRow.hidden = false;
+  confirmRow.dataset.host = String(hostIndex);
+  document.querySelector<HTMLButtonElement>("#host-confirm-go")?.focus();
+}
+
+function cancelSwitchHost(): void {
+  const confirmRow = document.querySelector<HTMLElement>("#host-confirm");
+  if (confirmRow) {
+    confirmRow.hidden = true;
+    delete confirmRow.dataset.host;
+  }
+}
+
+/**
+ * Sends the mouse away. Deliberately does not refresh afterwards: the device
+ * is gone the moment this succeeds, so a status read would only hang and then
+ * report a failure for something that worked. The panel drops to its
+ * disconnected state instead, which is the truth.
+ */
+async function switchHost(): Promise<void> {
+  const confirmRow = document.querySelector<HTMLElement>("#host-confirm");
+  const hostIndex = Number(confirmRow?.dataset.host ?? NaN);
+  const client = activeClient;
+  cancelSwitchHost();
+  if (!client || !Number.isInteger(hostIndex)) return;
+
+  setText("#read-status", `Sending the mouse to computer ${hostIndex + 1}…`);
+  try {
+    await client.setHost(hostIndex);
+  } catch (error) {
+    setText("#read-status", error instanceof Error ? error.message : "Unable to switch computer.");
+    return;
+  }
+
+  showDisconnectedState();
+  setText(
+    "#read-status",
+    `Sent to computer ${hostIndex + 1}. Press the button underneath the mouse to bring it back here.`,
+  );
 }
 
 function renderLogitechDetails(status: MouseStatus): void {

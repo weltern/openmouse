@@ -18,6 +18,7 @@ const FEATURE_INDEX = {
   adjustableDpi: 0x14,
   haptic: 0x0b,
   hostsInfo: 0x0f,
+  changeHost: 0x0e,
 } as const;
 
 /** Feature id -> index, mirroring the table an MX Master 4 reports. */
@@ -32,6 +33,7 @@ const MX_MASTER_4_FEATURES = new Map<number, number>([
   [0x2201, FEATURE_INDEX.adjustableDpi],
   [0x19b0, FEATURE_INDEX.haptic],
   [0x1815, FEATURE_INDEX.hostsInfo],
+  [0x1814, FEATURE_INDEX.changeHost],
 ]);
 
 interface FakeDeviceOptions {
@@ -76,6 +78,8 @@ class FakeHidDevice implements Partial<HIDDevice> {
   haptic: { companion: number; intensity: number };
   hosts: boolean[];
   currentHost: number;
+  /** Slots the client actually told the mouse to move to. */
+  readonly switchedTo: number[] = [];
   /** Effect ids the client asked the motor to play, in order. */
   readonly hapticEffectsPlayed: number[] = [];
   /** Changes between reads, standing in for a value the cache must not freeze. */
@@ -195,6 +199,13 @@ class FakeHidDevice implements Partial<HIDDevice> {
         }
         if (functionByte === (0x30 | SOFTWARE_ID)) return ok(0x01);
         return ok(this.wheelMode);
+
+      case FEATURE_INDEX.changeHost:
+        if (functionByte === (0x10 | SOFTWARE_ID)) {
+          this.switchedTo.push(parameters[0]);
+          return ok(parameters[0]);
+        }
+        return this.error(deviceIndex, featureIndex, functionByte);
 
       case FEATURE_INDEX.hostsInfo:
         // Mirrors a real MX Master 4: two leading capability bytes, then the
@@ -604,4 +615,37 @@ test("reading Easy-Switch state never writes to the mouse", async () => {
   const writes = device.sent.filter(({ bytes }) =>
     bytes[1] === FEATURE_INDEX.hostsInfo && (bytes[2] >> 4) > 0x01);
   assert.deepEqual(writes, [], "a status refresh reached a 0x1815 function above the getters");
+});
+
+test("switching to a paired slot sends 0x1814 fn 0x01 with that index", async () => {
+  const { client, device } = await connectClient({ hosts: [true, true, false], currentHost: 0 });
+  await client.readStatus();
+  await client.setHost(1);
+  assert.deepEqual(device.switchedTo, [1]);
+});
+
+test("switching to an empty slot is refused and sends nothing", async () => {
+  // The whole safety design rests on this: an empty slot leaves the mouse
+  // unreachable until someone presses the button on its underside.
+  const { client, device } = await connectClient({ hosts: [true, true, false], currentHost: 0 });
+  await client.readStatus();
+  await assert.rejects(() => client.setHost(2), /nothing paired/);
+  assert.deepEqual(device.switchedTo, [], "an empty slot was still sent to the mouse");
+});
+
+test("switching to the current slot or a slot that does not exist is refused", async () => {
+  const { client, device } = await connectClient({ hosts: [true, true, false], currentHost: 0 });
+  await client.readStatus();
+  await assert.rejects(() => client.setHost(0), /already connected/);
+  await assert.rejects(() => client.setHost(3), /not one of/);
+  await assert.rejects(() => client.setHost(-1), /not one of/);
+  assert.deepEqual(device.switchedTo, []);
+});
+
+test("a mouse without Easy-Switch refuses to switch rather than writing blind", async () => {
+  const features = new Map(MX_MASTER_4_FEATURES);
+  features.delete(0x1815);
+  const { client, device } = await connectClient({ features });
+  await assert.rejects(() => client.setHost(1), /does not report Easy-Switch/);
+  assert.deepEqual(device.switchedTo, []);
 });
