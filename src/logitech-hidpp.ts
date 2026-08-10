@@ -170,6 +170,23 @@ export class LogitechHidppClient {
   private firmwareCache: string[] | null = null;
   private supportsSeparateDpiAxesCache: boolean | null = null;
   private supportedPollingRatesCache: number[] | null = null;
+  /**
+   * Easy-Switch state cannot change under a live connection: the slot count is
+   * fixed, and the current slot changing *is* this connection ending, because
+   * that is what switching host does. Re-reading it was costing four
+   * round-trips of radio every five seconds to learn nothing.
+   */
+  private hostStateCache: {
+    hostCount: number | null;
+    currentHost: number | null;
+    hostSlotsPaired: boolean[] | null;
+  } | null = null;
+  /**
+   * The friendly name only moves when something renames the mouse. This client
+   * drops the entry after its own write; another application renaming it
+   * mid-session is rare enough not to be worth two round-trips per poll.
+   */
+  private friendlyNameCache: { name: string | null; maxLength: number | null } | null = null;
   private controlInfoCache: ControlInfo[] | null = null;
   private readonly rateChangeWaiters: Array<{ rate: number; resolve: () => void; reject: (reason: Error) => void }> = [];
   private readonly onInputReport = (event: HIDInputReportEvent): void => {
@@ -371,6 +388,8 @@ export class LogitechHidppClient {
     this.supportsSeparateDpiAxesCache = null;
     this.supportedPollingRatesCache = null;
     this.controlInfoCache = null;
+    this.hostStateCache = null;
+    this.friendlyNameCache = null;
     if (this.device.opened) {
       await this.device.close();
     }
@@ -559,7 +578,7 @@ export class LogitechHidppClient {
    */
   private async writeHaptic(
     change: { flagMask?: number; flagOn?: boolean; intensity?: number },
-  ): Promise<{ flags: number; intensity: number }> {
+  ): Promise<{ flags: number | null; intensity: number | null }> {
     const feature = await this.getFeature(FEATURE.haptic);
     if (!feature.index) throw new Error("This mouse has no haptic feature.");
 
@@ -571,7 +590,11 @@ export class LogitechHidppClient {
     const intensity = change.intensity ?? current[4] ?? 0;
 
     const confirmed = await this.request(feature.index, 0x20, flags, intensity);
-    return { flags: confirmed[3] ?? -1, intensity: confirmed[4] ?? -1 };
+    // Null rather than -1, which has every bit set and would have read back as
+    // "all flags on". Not reachable in practice — the transport never hands
+    // back a report short enough for these to be missing — but a sentinel that
+    // means "success" if it ever did fire is a poor thing to leave lying about.
+    return { flags: confirmed[3] ?? null, intensity: confirmed[4] ?? null };
   }
 
   /** Sets the haptic strength, leaving the flag byte as the mouse reports it. */
@@ -582,6 +605,7 @@ export class LogitechHidppClient {
     }
 
     const confirmed = await this.writeHaptic({ intensity: value });
+    if (confirmed.intensity === null) throw new Error("The mouse gave no answer to the haptic write.");
     if (confirmed.intensity !== value) {
       throw new Error(`The mouse kept a haptic intensity of ${confirmed.intensity}.`);
     }
@@ -591,6 +615,7 @@ export class LogitechHidppClient {
   /** Turns haptic feedback on or off, preserving the strength and other flags. */
   async setHapticEnabled(enabled: boolean): Promise<boolean> {
     const confirmed = await this.writeHaptic({ flagMask: HAPTIC_FLAG.enabled, flagOn: enabled });
+    if (confirmed.flags === null) throw new Error("The mouse gave no answer to the haptic write.");
     const applied = (confirmed.flags & HAPTIC_FLAG.enabled) !== 0;
     if (applied !== enabled) {
       throw new Error(`The mouse kept haptics ${applied ? "on" : "off"}.`);
@@ -601,6 +626,7 @@ export class LogitechHidppClient {
   /** Turns the haptic battery-saving mode on or off. */
   async setHapticBatterySaving(enabled: boolean): Promise<boolean> {
     const confirmed = await this.writeHaptic({ flagMask: HAPTIC_FLAG.batterySaving, flagOn: enabled });
+    if (confirmed.flags === null) throw new Error("The mouse gave no answer to the haptic write.");
     const applied = (confirmed.flags & HAPTIC_FLAG.batterySaving) !== 0;
     if (applied !== enabled) {
       throw new Error(`The mouse kept battery saving ${applied ? "on" : "off"}.`);
@@ -617,13 +643,15 @@ export class LogitechHidppClient {
    * for, so the text starts one byte into the payload.
    */
   private async readFriendlyName(): Promise<{ name: string | null; maxLength: number | null }> {
+    if (this.friendlyNameCache) return this.friendlyNameCache;
+
     const feature = await this.getFeature(FEATURE.friendlyName);
-    if (!feature.index) return { name: null, maxLength: null };
+    if (!feature.index) return (this.friendlyNameCache = { name: null, maxLength: null });
 
     const info = await this.request(feature.index, 0x00);
     const length = info[3] ?? 0;
     const maxLength = info[4] ?? 0;
-    if (!length) return { name: "", maxLength: maxLength || null };
+    if (!length) return (this.friendlyNameCache = { name: "", maxLength: maxLength || null });
 
     const characters: number[] = [];
     while (characters.length < length) {
@@ -632,16 +660,18 @@ export class LogitechHidppClient {
       if (!text.length) break;
       characters.push(...text);
     }
-    return {
+    return (this.friendlyNameCache = {
       name: new TextDecoder().decode(new Uint8Array(characters)).replace(/\0/g, "").trim(),
       maxLength: maxLength || null,
-    };
+    });
   }
 
   /**
-   * Renames the mouse. fn 0x03 takes an offset followed by characters and
-   * answers with how many it accepted, so a name longer than one report is
-   * written in passes until the device stops taking them.
+   * Renames the mouse through fn 0x03, which takes an offset followed by
+   * characters. A long report carries fifteen characters and this mouse allows
+   * fourteen, so one write always covers the whole name — the multi-pass loop
+   * this replaced could never run twice, and carried advance logic that had
+   * therefore never executed.
    *
    * The caller is expected to have the old name from readStatus, since undoing
    * this means writing that string back and nothing else records it.
@@ -661,17 +691,17 @@ export class LogitechHidppClient {
       throw new Error("A name may only contain plain ASCII characters.");
     }
 
-    let written = 0;
-    while (written < bytes.length) {
-      const chunk = bytes.slice(written, written + 15);
-      const reply = await this.requestLong(feature.index, 0x30, [written, ...chunk]);
-      const accepted = reply[3] ?? 0;
-      if (accepted <= written) {
-        throw new Error("The mouse stopped accepting the new name.");
-      }
-      written = accepted;
+    const NAME_BYTES_PER_REPORT = 15;
+    if (bytes.length > NAME_BYTES_PER_REPORT) {
+      // Unreachable while maxLength is 14, and a guard rather than a loop
+      // because untested paging logic is worse than an honest refusal.
+      throw new Error(`A name of more than ${NAME_BYTES_PER_REPORT} characters is not supported.`);
     }
+    await this.requestLong(feature.index, 0x30, [0, ...bytes]);
 
+    // The confirmation must reach the mouse rather than the value from before
+    // this write — a cache answering here would confirm nothing at all.
+    this.friendlyNameCache = null;
     const confirmed = await this.readFriendlyName();
     if (confirmed.name !== name.trim()) {
       throw new Error(`The mouse kept the name "${confirmed.name ?? ""}".`);
@@ -697,13 +727,16 @@ export class LogitechHidppClient {
     currentHost: number | null;
     hostSlotsPaired: boolean[] | null;
   }> {
+    if (this.hostStateCache) return this.hostStateCache;
+
     const feature = await this.getFeature(FEATURE.hostsInfo);
-    if (!feature.index) return { hostCount: null, currentHost: null, hostSlotsPaired: null };
+    const absent = { hostCount: null, currentHost: null, hostSlotsPaired: null };
+    if (!feature.index) return (this.hostStateCache = absent);
 
     const info = await this.request(feature.index, 0x00);
     const hostCount = info[5] ?? 0;
     const currentHost = info[6] ?? 0;
-    if (!hostCount) return { hostCount: null, currentHost: null, hostSlotsPaired: null };
+    if (!hostCount) return (this.hostStateCache = absent);
 
     const hostSlotsPaired: boolean[] = [];
     for (let host = 0; host < hostCount; host += 1) {
@@ -716,7 +749,7 @@ export class LogitechHidppClient {
         hostSlotsPaired.push(false);
       }
     }
-    return { hostCount, currentHost, hostSlotsPaired };
+    return (this.hostStateCache = { hostCount, currentHost, hostSlotsPaired });
   }
 
   /**

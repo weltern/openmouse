@@ -1321,16 +1321,36 @@ function cancelSwitchHost(): void {
 async function switchHost(): Promise<void> {
   const confirmRow = document.querySelector<HTMLElement>("#host-confirm");
   const hostIndex = Number(confirmRow?.dataset.host ?? NaN);
-  const client = activeClient;
   cancelSwitchHost();
-  if (!client || !Number.isInteger(hostIndex)) return;
+  if (!activeClient || !Number.isInteger(hostIndex)) return;
 
+  /*
+   * This cannot go through applyLogitechSetting, which reads the status back
+   * afterwards — the device is gone by then. It must still respect the same
+   * traffic rules, though: it was the one write in the panel firing regardless
+   * of a poll or another write already holding the radio.
+   */
+  if (!await waitForIdle()) {
+    setText("#read-status", "The mouse is busy; try again in a moment.");
+    return;
+  }
+  const client = activeClient;
+  if (!client || settingInProgress) {
+    setText("#read-status", "The mouse is busy; try again in a moment.");
+    return;
+  }
+
+  settingInProgress = true;
   setText("#read-status", `Sending the mouse to computer ${hostIndex + 1}…`);
   try {
     await client.setHost(hostIndex);
   } catch (error) {
     setText("#read-status", error instanceof Error ? error.message : "Unable to switch computer.");
     return;
+  } finally {
+    // Released on every path. A refused switch that left this set would wedge
+    // the whole panel, since every other control waits on the same flag.
+    settingInProgress = false;
   }
 
   showDisconnectedState();

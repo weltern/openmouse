@@ -719,3 +719,40 @@ test("a rename the mouse acknowledges but ignores is reported as a failure", asy
   await assert.rejects(() => client.setFriendlyName("Desk mouse"), /kept the name "MX Master 4"/);
   assert.equal(device.friendlyName, "MX Master 4");
 });
+
+test("Easy-Switch state and the name are read once, not on every poll", async () => {
+  const { client, device } = await connectClient();
+  await client.readStatus();
+  device.sent.length = 0;
+  await client.readStatus();
+
+  const touched = (featureIndex: number): number =>
+    device.sent.filter(({ bytes }) => bytes[1] === featureIndex).length;
+  // Neither can change under a live connection: switching host disconnects,
+  // and only a rename moves the name. Polling them was radio for nothing.
+  assert.equal(touched(FEATURE_INDEX.hostsInfo), 0, "Easy-Switch was re-read on a refresh");
+  assert.equal(touched(FEATURE_INDEX.friendlyName), 0, "the name was re-read on a refresh");
+  // Haptics genuinely change, so they must still be read every time.
+  assert.ok(touched(FEATURE_INDEX.haptic) > 0, "haptic state stopped refreshing");
+});
+
+test("a reconnect re-reads Easy-Switch and the name", async () => {
+  const { client, device } = await connectClient();
+  await client.readStatus();
+  await client.close();
+
+  device.sent.length = 0;
+  await client.readStatus();
+  const touched = (featureIndex: number): number =>
+    device.sent.filter(({ bytes }) => bytes[1] === featureIndex).length;
+  assert.ok(touched(FEATURE_INDEX.hostsInfo) > 0, "a stale slot survived a reconnect");
+  assert.ok(touched(FEATURE_INDEX.friendlyName) > 0, "a stale name survived a reconnect");
+});
+
+test("renaming shows the new name on the next poll, not the cached one", async () => {
+  const { client } = await connectClient();
+  await client.readStatus();
+  await client.setFriendlyName("Desk mouse");
+  const status = await client.readStatus();
+  assert.equal(status.friendlyName, "Desk mouse", "the cache outlived the rename that changed it");
+});
