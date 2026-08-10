@@ -17,6 +17,7 @@ const FEATURE_INDEX = {
   thumbWheel: 0x13,
   adjustableDpi: 0x14,
   haptic: 0x0b,
+  hostsInfo: 0x0f,
 } as const;
 
 /** Feature id -> index, mirroring the table an MX Master 4 reports. */
@@ -30,6 +31,7 @@ const MX_MASTER_4_FEATURES = new Map<number, number>([
   [0x2150, FEATURE_INDEX.thumbWheel],
   [0x2201, FEATURE_INDEX.adjustableDpi],
   [0x19b0, FEATURE_INDEX.haptic],
+  [0x1815, FEATURE_INDEX.hostsInfo],
 ]);
 
 interface FakeDeviceOptions {
@@ -43,6 +45,8 @@ interface FakeDeviceOptions {
   smartShift?: { mode: number; threshold: number };
   thumbWheel?: { diverted: number; inverted: number };
   haptic?: { companion: number; intensity: number };
+  hosts?: boolean[];
+  currentHost?: number;
 }
 
 /**
@@ -70,6 +74,8 @@ class FakeHidDevice implements Partial<HIDDevice> {
   smartShift: { mode: number; threshold: number };
   thumbWheel: { diverted: number; inverted: number };
   haptic: { companion: number; intensity: number };
+  hosts: boolean[];
+  currentHost: number;
   /** Effect ids the client asked the motor to play, in order. */
   readonly hapticEffectsPlayed: number[] = [];
   /** Changes between reads, standing in for a value the cache must not freeze. */
@@ -85,6 +91,8 @@ class FakeHidDevice implements Partial<HIDDevice> {
     this.thumbWheel = options.thumbWheel ?? { diverted: 1, inverted: 0 };
     // 0x03 / 60 is the pair a real MX Master 4 rests at.
     this.haptic = options.haptic ?? { companion: 0x03, intensity: 60 };
+    this.hosts = options.hosts ?? [true, true, false];
+    this.currentHost = options.currentHost ?? 0;
   }
 
   async open(): Promise<void> {
@@ -187,6 +195,17 @@ class FakeHidDevice implements Partial<HIDDevice> {
         }
         if (functionByte === (0x30 | SOFTWARE_ID)) return ok(0x01);
         return ok(this.wheelMode);
+
+      case FEATURE_INDEX.hostsInfo:
+        // Mirrors a real MX Master 4: two leading capability bytes, then the
+        // counts. Slots 0 and 1 paired, slot 2 empty.
+        if (functionByte === (0x00 | SOFTWARE_ID)) return ok(0x13, 0x08, this.hosts.length, this.currentHost);
+        if (functionByte === (0x10 | SOFTWARE_ID)) {
+          const slot = parameters[0];
+          if (slot >= this.hosts.length) return this.error(deviceIndex, featureIndex, functionByte);
+          return ok(slot, this.hosts[slot] ? 0x01 : 0x00, 0x05, 0x01, 0x0a, 0x18);
+        }
+        return this.error(deviceIndex, featureIndex, functionByte);
 
       case FEATURE_INDEX.haptic:
         if (functionByte === (0x40 | SOFTWARE_ID)) {
@@ -550,4 +569,39 @@ test("unknown bits of the haptic flag byte survive a write", async () => {
   const { client, device } = await connectClient({ haptic: { companion: 0x83, intensity: 60 } });
   await client.setHapticEnabled(false);
   assert.equal(device.haptic.companion, 0x82, "bit 7 was dropped by a flag write");
+});
+
+test("Easy-Switch slots are read from past the capability bytes", async () => {
+  const { client } = await connectClient({ hosts: [true, true, false], currentHost: 0 });
+  const status = await client.readStatus();
+  // Reading the counts one byte early is what claimed eight slots on real
+  // hardware, so these two assertions are the whole point of this test.
+  assert.equal(status.hostCount, 3);
+  assert.equal(status.currentHost, 0);
+  assert.deepEqual(status.hostSlotsPaired, [true, true, false]);
+});
+
+test("a mouse on its second host reports that slot", async () => {
+  const { client } = await connectClient({ hosts: [true, true, true], currentHost: 1 });
+  const status = await client.readStatus();
+  assert.equal(status.currentHost, 1);
+  assert.equal(status.hostCount, 3);
+});
+
+test("a mouse without 0x1815 reports no Easy-Switch state", async () => {
+  const features = new Map(MX_MASTER_4_FEATURES);
+  features.delete(0x1815);
+  const { client } = await connectClient({ features });
+  const status = await client.readStatus();
+  assert.equal(status.hostCount, null);
+  assert.equal(status.currentHost, null);
+  assert.equal(status.hostSlotsPaired, null);
+});
+
+test("reading Easy-Switch state never writes to the mouse", async () => {
+  const { client, device } = await connectClient();
+  await client.readStatus();
+  const writes = device.sent.filter(({ bytes }) =>
+    bytes[1] === FEATURE_INDEX.hostsInfo && (bytes[2] >> 4) > 0x01);
+  assert.deepEqual(writes, [], "a status refresh reached a 0x1815 function above the getters");
 });

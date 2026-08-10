@@ -47,6 +47,7 @@ const FEATURE = {
   hiresWheel: 0x2121,
   thumbWheel: 0x2150,
   haptic: 0x19b0,
+  hostsInfo: 0x1815,
   reprogControls: 0x1b04,
   extendedDpi: 0x2202,
   extendedReportRate: 0x8061,
@@ -304,6 +305,7 @@ export class LogitechHidppClient {
     const profileState = await this.readProfileState(profilesFeature.index);
     const wheel = await this.readWheelState();
     const haptic = await this.readHapticState();
+    const hosts = await this.readHostState();
     const firmware = this.firmwareCache ?? (this.firmwareCache = await this.readFirmware(firmwareFeature.index));
 
     return {
@@ -339,6 +341,9 @@ export class LogitechHidppClient {
       hapticIntensity: haptic.intensity,
       hapticEnabled: haptic.enabled,
       hapticBatterySaving: haptic.batterySaving,
+      hostCount: hosts.hostCount,
+      currentHost: hosts.currentHost,
+      hostSlotsPaired: hosts.hostSlotsPaired,
       unitId: identity.unitId,
       modelId: identity.modelId,
       transportIds: identity.transportIds,
@@ -596,6 +601,46 @@ export class LogitechHidppClient {
       throw new Error(`The mouse kept battery saving ${applied ? "on" : "off"}.`);
     }
     return applied;
+  }
+
+  /**
+   * Easy-Switch slots. 0x1815 fn 0x00 answers
+   * [capabilities(2), hostCount, currentHost] — reading the counts one byte
+   * early claimed eight slots on a mouse whose slots 3 and up refuse outright.
+   * fn 0x01 then reports each slot, where status 1 means a computer is paired.
+   *
+   * Indices here are zero-based, as the protocol has them. The mouse's own
+   * Easy-Switch button and indicator count from one, so anything user-facing
+   * has to add one or it will disagree with the hardware in the user's hand.
+   *
+   * Read only. Changing host lives in 0x1814 and would disconnect this
+   * computer, which is not something a status refresh should ever do.
+   */
+  private async readHostState(): Promise<{
+    hostCount: number | null;
+    currentHost: number | null;
+    hostSlotsPaired: boolean[] | null;
+  }> {
+    const feature = await this.getFeature(FEATURE.hostsInfo);
+    if (!feature.index) return { hostCount: null, currentHost: null, hostSlotsPaired: null };
+
+    const info = await this.request(feature.index, 0x00);
+    const hostCount = info[5] ?? 0;
+    const currentHost = info[6] ?? 0;
+    if (!hostCount) return { hostCount: null, currentHost: null, hostSlotsPaired: null };
+
+    const hostSlotsPaired: boolean[] = [];
+    for (let host = 0; host < hostCount; host += 1) {
+      try {
+        const entry = await this.request(feature.index, 0x10, host);
+        hostSlotsPaired.push((entry[4] ?? 0) !== 0);
+      } catch {
+        // A slot that refuses to describe itself is reported as unpaired
+        // rather than dropped, so the numbering keeps matching the hardware.
+        hostSlotsPaired.push(false);
+      }
+    }
+    return { hostCount, currentHost, hostSlotsPaired };
   }
 
   /**

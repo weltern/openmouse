@@ -74,6 +74,12 @@ export interface MouseStatus {
   hapticEnabled?: boolean | null;
   /** Logitech 0x19B0 byte 0 bit 1 — the mouse's own haptic battery saver. */
   hapticBatterySaving?: boolean | null;
+  /** Logitech 0x1815 — how many Easy-Switch slots the device has. */
+  hostCount?: number | null;
+  /** Zero-based slot this connection uses; the mouse's own indicator counts from one. */
+  currentHost?: number | null;
+  /** One entry per slot, true when a computer is paired to it. */
+  hostSlotsPaired?: boolean[] | null;
   /** Logitech 0x2121: high-resolution (smooth) scrolling. */
   hiResScroll?: boolean | null;
   invertScroll?: boolean | null;
