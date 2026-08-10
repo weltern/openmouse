@@ -28,6 +28,7 @@ import {
   type ReprogrammableControl,
 } from "./logitech-hidpp";
 import { controlName } from "./logitech-controls";
+import { SettingRunner } from "./setting-runner";
 import type { MouseStatus } from "./mouse-types";
 import type { EggButtonAction, EggButtonActionKey, EggOp1Status } from "./egg-op1-protocol";
 import { PulsarHidClient } from "./pulsar-hid";
@@ -1515,7 +1516,7 @@ function showDisconnectedState(): void {
   activeClient = null;
   // A click held back while a write was running must not fire at a device that
   // has since gone away — switching hosts disconnects on purpose.
-  queuedSetting = null;
+  settingRunner.clear();
   activePulsarClient = null;
   activeEggClient = null;
   activeEggWeClient = null;
@@ -1845,53 +1846,35 @@ async function applyDpiValue(dpi: number): Promise<boolean> {
 }
 
 /**
- * The most recent click made while a write was already running. Only one is
- * kept: clicking Subtle then High then Subtle should end on Subtle, and
- * replaying the middle choice would be both slower and wrong.
+ * Owns when a settings write runs: waits out a background poll, holds a click
+ * made during another write, and drops what is held when the device goes away.
+ * The logic lives in setting-runner.ts so it can be tested without a DOM —
+ * every user-visible bug this panel has shipped was in exactly this decision,
+ * and none of them were reachable while it was tangled up with the markup.
  */
-let queuedSetting: { label: string; write: (client: LogitechHidppClient) => Promise<unknown> } | null = null;
+const settingRunner = new SettingRunner({
+  isConnected: () => activeClient !== null,
+  isRefreshing: () => refreshInProgress,
+  isWriting: () => settingInProgress,
+  setWriting: (value) => { settingInProgress = value; },
+  status: (message) => setText("#read-status", message),
+  sleep: (milliseconds) => new Promise((resolve) => window.setTimeout(resolve, milliseconds)),
+  now: () => Date.now(),
+});
 
 /** Runs one Logitech write, then refreshes from the mouse to confirm it. */
-async function applyLogitechSetting(label: string, write: (client: LogitechHidppClient) => Promise<unknown>): Promise<void> {
-  if (!activeClient) return;
-  /*
-   * A click landing while another write is in flight used to return silently,
-   * which is how clicking quickly appeared to "interrupt" itself — one press in
-   * a burst simply vanished with no error. Dropping the click was the same
-   * mistake waitForIdle exists to correct for the poll, just behind the other
-   * flag. The latest choice is held and run when the current write finishes.
-   */
-  if (settingInProgress) {
-    queuedSetting = { label, write };
-    setText("#read-status", `${label}…`);
-    return;
-  }
-
-  if (!await waitForIdle()) {
-    setText("#read-status", "The mouse is busy; try again in a moment.");
-    return;
-  }
-  // Awaiting yields to other handlers, so this may have changed underneath us.
-  if (!activeClient) return;
-  if (settingInProgress) {
-    queuedSetting = { label, write };
-    return;
-  }
-
-  const client = activeClient;
-  settingInProgress = true;
-  setText("#read-status", `${label}…`);
-  try {
+async function applyLogitechSetting(
+  label: string,
+  write: (client: LogitechHidppClient) => Promise<unknown>,
+): Promise<void> {
+  await settingRunner.run(label, async () => {
+    // Resolved inside the callback, not captured outside it: a held click runs
+    // later, and the device it runs against must be the one connected then.
+    const client = activeClient;
+    if (!client) return;
     await write(client);
     showStatus(await client.readStatus());
-  } catch (error) {
-    setText("#read-status", error instanceof Error ? error.message : `Unable to apply ${label.toLowerCase()}.`);
-  } finally {
-    settingInProgress = false;
-    const next = queuedSetting;
-    queuedSetting = null;
-    if (next) await applyLogitechSetting(next.label, next.write);
-  }
+  });
 }
 
 /**
@@ -1901,11 +1884,7 @@ async function applyLogitechSetting(label: string, write: (client: LogitechHidpp
  * of button presses with no feedback at all.
  */
 async function waitForIdle(timeoutMs = 4000): Promise<boolean> {
-  const deadline = Date.now() + timeoutMs;
-  while (refreshInProgress && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(resolve, 60));
-  }
-  return !refreshInProgress;
+  return await settingRunner.waitForIdle(timeoutMs);
 }
 
 /** Re-reads the button table from the mouse, so the card can show live state. */
