@@ -1513,6 +1513,9 @@ function showDisconnectedState(): void {
     refreshTimer = null;
   }
   activeClient = null;
+  // A click held back while a write was running must not fire at a device that
+  // has since gone away — switching hosts disconnects on purpose.
+  queuedSetting = null;
   activePulsarClient = null;
   activeEggClient = null;
   activeEggWeClient = null;
@@ -1841,19 +1844,40 @@ async function applyDpiValue(dpi: number): Promise<boolean> {
   }
 }
 
-/** Runs one Logitech wheel write, then refreshes from the mouse to confirm it. */
+/**
+ * The most recent click made while a write was already running. Only one is
+ * kept: clicking Subtle then High then Subtle should end on Subtle, and
+ * replaying the middle choice would be both slower and wrong.
+ */
+let queuedSetting: { label: string; write: (client: LogitechHidppClient) => Promise<unknown> } | null = null;
+
+/** Runs one Logitech write, then refreshes from the mouse to confirm it. */
 async function applyLogitechSetting(label: string, write: (client: LogitechHidppClient) => Promise<unknown>): Promise<void> {
-  if (!activeClient || settingInProgress) return;
-  // Every settings card sat behind the plain drop-the-click guard that
-  // waitForIdle exists to replace — it was only ever wired into the button
-  // paths. A press landing inside the five-second poll did nothing at all and
-  // said nothing about why.
+  if (!activeClient) return;
+  /*
+   * A click landing while another write is in flight used to return silently,
+   * which is how clicking quickly appeared to "interrupt" itself — one press in
+   * a burst simply vanished with no error. Dropping the click was the same
+   * mistake waitForIdle exists to correct for the poll, just behind the other
+   * flag. The latest choice is held and run when the current write finishes.
+   */
+  if (settingInProgress) {
+    queuedSetting = { label, write };
+    setText("#read-status", `${label}…`);
+    return;
+  }
+
   if (!await waitForIdle()) {
     setText("#read-status", "The mouse is busy; try again in a moment.");
     return;
   }
-  // The wait yields to other handlers, so neither of these is still guaranteed.
-  if (!activeClient || settingInProgress) return;
+  // Awaiting yields to other handlers, so this may have changed underneath us.
+  if (!activeClient) return;
+  if (settingInProgress) {
+    queuedSetting = { label, write };
+    return;
+  }
+
   const client = activeClient;
   settingInProgress = true;
   setText("#read-status", `${label}…`);
@@ -1864,6 +1888,9 @@ async function applyLogitechSetting(label: string, write: (client: LogitechHidpp
     setText("#read-status", error instanceof Error ? error.message : `Unable to apply ${label.toLowerCase()}.`);
   } finally {
     settingInProgress = false;
+    const next = queuedSetting;
+    queuedSetting = null;
+    if (next) await applyLogitechSetting(next.label, next.write);
   }
 }
 
