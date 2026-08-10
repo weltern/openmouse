@@ -34,7 +34,10 @@
 <button id="rescan">Re-probe authorized</button>
 <button id="wheel">Dump wheel features</button>
 <button id="buttons">Dump buttons</button>
+<button id="hosts">Dump Easy-Switch hosts</button>
+<button id="restore-cookie" class="risky">Restore config cookie (0x12DD)</button>
 <button id="scan-safe">Scan haptics &amp; force (reads)</button>
+<button id="scan-unexplored">Scan unexplored features (reads)</button>
 <button id="scan-deep" class="risky">Scan haptics &amp; force (deep)</button>
 <button id="watch">Watch live values</button>
 <button id="buzz" class="risky">Buzz test (0x19B0 fn 0x04)</button>
@@ -50,7 +53,7 @@
 <p class="sub warn">
   The two scan buttons walk the function ids of 0x19B0 HAPTIC, 0x19C0 FORCE SENSING BUTTON
   and 0x2251 WHEEL STATS &mdash; features Solaar names but nobody has decoded. The first
-  stops at function 0x03, which by HID++ convention is still getter territory. The
+  stops at function 0x02, below the first plausible setter on any feature seen so far. The
   <strong>deep</strong> scan goes to 0x0F and can therefore call a setter with all-zero
   arguments; run the safe scan first so its output records anything a write would need to
   restore.

@@ -621,13 +621,23 @@ async function dumpButtons(device: HIDDevice): Promise<void> {
 const UNDOCUMENTED_FEATURES = [0x19b0, 0x19c0, 0x2251] as const;
 
 /**
- * How far up the function space to walk. HID++ 2.0 numbers each feature's
- * functions from zero and, by near-universal convention, puts the getters
- * first, so a low ceiling reads state with little chance of reaching a setter.
- * The deep ceiling can call a setter with all-zero arguments — only use it once
- * the safe pass has recorded values that a write could be restored from.
+ * Plain, user-facing features the 45-entry table turned up that nothing here
+ * has ever called. Deliberately excludes everything the firmware flags
+ * hidden/engineering — those are factory hooks, not settings, and two of them
+ * are flash access and device reset.
  */
-const SAFE_FUNCTION_CEILING = 0x03;
+const UNEXPLORED_FEATURES = [0x0007, 0x0011, 0x0020, 0x2250, 0x1701, 0x1602, 0x00d1] as const;
+
+/**
+ * How far up the function space to walk. HID++ 2.0 numbers each feature's
+ * functions from zero and generally puts the getters first — but only
+ * generally. On 0x0007 DEVICE FRIENDLY NAME functions 0x00 to 0x02 are all
+ * getters and 0x03 is almost certainly setFriendlyName, which a walk to 0x03
+ * called with zero arguments. The name survived, but that was luck rather than
+ * design, so the safe ceiling now stops below the first plausible setter.
+ * Anything above it is an explicit, deliberate choice.
+ */
+const SAFE_FUNCTION_CEILING = 0x02;
 const DEEP_FUNCTION_CEILING = 0x0f;
 
 /**
@@ -665,6 +675,20 @@ async function scanFunctions(
   }
   log(`    feature index 0x${hex(featureIndex)}`);
 
+  /*
+   * Snapshot fn 0x00 before the walk and re-read it after. No ceiling makes a
+   * blind walk safe — 0x0020's setter is fn 0x01, below any useful ceiling —
+   * so the walk cannot avoid side effects and must instead notice them. This
+   * caught nothing until it was needed: the walk zeroed 0x0020's configuration
+   * cookie and nobody saw for three runs.
+   */
+  let before = "";
+  try {
+    before = hexBytes((await bus.request(deviceIndex, featureIndex, 0x0, [], 1200)).slice(3, 11));
+  } catch {
+    // A feature whose fn 0x00 needs arguments simply has no cheap snapshot.
+  }
+
   for (let fn = 0; fn <= ceiling; fn += 1) {
     try {
       const reply = await bus.request(deviceIndex, featureIndex, fn, [], 1200);
@@ -680,9 +704,24 @@ async function scanFunctions(
       }
     }
   }
+
+  if (before) {
+    try {
+      const after = hexBytes((await bus.request(deviceIndex, featureIndex, 0x0, [], 1200)).slice(3, 11));
+      if (after !== before) {
+        log(`    ⚠ THIS WALK CHANGED THE DEVICE: fn 0x00 was ${before}, now ${after}`);
+      }
+    } catch {
+      // Nothing to compare against; silence beats a false all-clear.
+    }
+  }
 }
 
-async function dumpUndocumented(device: HIDDevice, ceiling: number): Promise<void> {
+async function dumpUndocumented(
+  device: HIDDevice,
+  ceiling: number,
+  features: ReadonlyArray<number> = UNDOCUMENTED_FEATURES,
+): Promise<void> {
   describeDevice(device);
   const bus = new Transceiver(device);
   await bus.open();
@@ -696,7 +735,7 @@ async function dumpUndocumented(device: HIDDevice, ceiling: number): Promise<voi
     log(`  using device index 0x${hex(deviceIndex)}`);
     log(`  walking function ids 0x00-0x${hex(ceiling)} with no arguments`);
 
-    for (const featureId of UNDOCUMENTED_FEATURES) {
+    for (const featureId of features) {
       await scanFunctions(bus, deviceIndex, featureId, ceiling);
     }
 
@@ -727,6 +766,20 @@ const WATCH_TARGETS: ReadonlyArray<{ featureId: number; fn: number; label: strin
   /** Candidate counters: if these are wheel statistics, scrolling moves them. */
   { featureId: 0x2251, fn: 0x01, label: "wheelstats fn01" },
   { featureId: 0x2251, fn: 0x02, label: "wheelstats fn02" },
+  /**
+   * 0x0020 fn 0x00 answers a single value — 0x12DD on this mouse. If that is a
+   * configuration cookie it moves whenever anything changes a setting, which
+   * would let a client notice an external change with one read instead of the
+   * seven round-trips a full status refresh costs.
+   */
+  { featureId: 0x0020, fn: 0x00, label: "config cookie" },
+  /**
+   * Guard, not a discovery. The safe scan called 0x0007 fn 0x03 with zero
+   * arguments on the assumption it was a getter; if it is setFriendlyName
+   * instead, the name was overwritten with nulls. Watching it read back proves
+   * whether "MX Master 4" survived.
+   */
+  { featureId: 0x0007, fn: 0x01, label: "friendly name" },
 ];
 
 const WATCH_INTERVAL_MS = 60;
@@ -755,6 +808,7 @@ async function watchTargets(device: HIDDevice): Promise<void> {
 
     const targets: Array<{
       label: string;
+      featureId: number;
       featureIndex: number;
       fn: number;
       last: string;
@@ -767,7 +821,15 @@ async function watchTargets(device: HIDDevice): Promise<void> {
         log(`  ${target.label}: 0x${hex(target.featureId, 4)} not implemented.`);
         continue;
       }
-      targets.push({ label: target.label, featureIndex, fn: target.fn, last: "", changes: 0, control: target.control });
+      targets.push({
+        label: target.label,
+        featureId: target.featureId,
+        featureIndex,
+        fn: target.fn,
+        last: "",
+        changes: 0,
+        control: target.control,
+      });
     }
     if (!targets.length) return;
 
@@ -821,7 +883,13 @@ async function watchTargets(device: HIDDevice): Promise<void> {
         if (!watching) break;
         try {
           const reply = await bus.request(deviceIndex, target.featureIndex, target.fn, [], 800);
-          const payload = hexBytes(reply.slice(3, 11));
+          // The friendly name needs its printable form to be readable at a
+          // glance; hex alone would not show nulls replacing the text.
+          const payload = target.featureId === 0x0007
+            ? `${hexBytes(reply.slice(3, 11))}  "${[...reply.slice(4, 16)]
+                .map((b) => (b >= 0x20 && b < 0x7f ? String.fromCharCode(b) : b === 0 ? "" : "."))
+                .join("")}"`
+            : hexBytes(reply.slice(3, 11));
           if (payload !== target.last) {
             // The first read of each target is the baseline, not a change.
             if (target.last) target.changes += 1;
@@ -1112,6 +1180,129 @@ function buildEffectPad(): void {
 
 buildEffectPad();
 
+/**
+ * Read-only dump of 0x1815 HOSTS INFO — the Easy-Switch slots. Decodes beside
+ * the raw bytes so the two can be checked against each other; Solaar documents
+ * this feature, but a decode is a claim until this mouse's bytes agree with it.
+ * Nothing here writes: 0x1814 CHANGE HOST would move the mouse to another
+ * machine, which is a separate deliberate act.
+ */
+async function dumpHosts(device: HIDDevice): Promise<void> {
+  describeDevice(device);
+  const bus = new Transceiver(device);
+  await bus.open();
+
+  try {
+    const deviceIndex = await findLiveIndex(bus);
+    if (deviceIndex === null) {
+      log("  no live device index — wake the mouse and retry.");
+      return;
+    }
+    const featureIndex = await getFeatureIndex(bus, deviceIndex, 0x1815);
+    if (!featureIndex) {
+      log("  0x1815 HOSTS INFO not implemented by this device.");
+      return;
+    }
+    log(`  0x1815 HOSTS INFO at feature index 0x${hex(featureIndex)}`);
+    log("");
+
+    const info = await bus.request(deviceIndex, featureIndex, 0x0);
+    log(`  fn 0x00 getHostsInfo    raw: ${hexBytes(info.slice(3, 11))}`);
+    /*
+     * Corrected against this mouse. Reading these one byte early claimed eight
+     * slots while slots 3 and up refused outright — the two leading bytes are a
+     * capability mask, so the counts sit after it.
+     */
+    const hostCount = info[5] ?? 0;
+    const currentHost = info[6] ?? 0;
+    const capabilities = ((info[3] ?? 0) << 8) | (info[4] ?? 0);
+    log(`       ↳ capabilities=0x${hex(capabilities, 4)}, ${hostCount} slot(s), currently slot ${currentHost} (0-based)`);
+
+    // Deliberately walks one past the reported count: a refusal on the next
+    // slot is what proves the count right rather than merely self-consistent.
+    for (let host = 0; host <= Math.max(hostCount, 1) && host < 8; host += 1) {
+      log("");
+      try {
+        const entry = await bus.request(deviceIndex, featureIndex, 0x1, [host]);
+        const status = entry[4] ?? 0;
+        const nameLength = entry[7] ?? 0;
+        const label = host === currentHost ? " ← this computer" : "";
+        log(`  slot ${host}${label}`);
+        log(`    fn 0x01 getHostInfo   raw: ${hexBytes(entry.slice(3, 11))}`);
+        log(`         ↳ status=${status} (${status === 0 ? "empty" : status === 1 ? "paired" : `other (${status})`}), name length=${nameLength}`);
+
+        if (nameLength) {
+          /*
+           * Raw first. The previous decode assumed the name began after an
+           * echoed host index and byte index and produced mojibake, so that
+           * offset is wrong — and a decode printed with no raw beside it
+           * leaves nothing to correct it from. ASCII is obvious in hex.
+           */
+          const chunk = await bus.request(deviceIndex, featureIndex, 0x2, [host, 0]);
+          log(`    fn 0x02 name chunk    raw: ${hexBytes(chunk.slice(3, 19))}`);
+          const ascii = [...chunk.slice(3, 19)]
+            .map((byte) => (byte >= 0x20 && byte < 0x7f ? String.fromCharCode(byte) : "."))
+            .join("");
+          log(`         ↳ printable: "${ascii}"   (name is ${nameLength} chars — where does it start?)`);
+        }
+      } catch (error) {
+        log(`  slot ${host}: ${error instanceof Error ? error.message : String(error)}`);
+      }
+    }
+
+    log("");
+    log("Done — nothing was written. Switching hosts is a separate, deliberate action.");
+  } finally {
+    await bus.close();
+  }
+}
+
+/**
+ * Writes 0x12DD back to 0x0020 and reads it again. The value is the one this
+ * mouse held before a zero-argument walk overwrote it, so the experiment and
+ * the repair are the same action: a read-back of 12 DD both confirms fn 0x01
+ * is the cookie setter and leaves the mouse as it was found.
+ */
+async function restoreConfigCookie(device: HIDDevice): Promise<void> {
+  const ORIGINAL = [0x12, 0xdd];
+
+  describeDevice(device);
+  const bus = new Transceiver(device);
+  await bus.open();
+
+  try {
+    const deviceIndex = await findLiveIndex(bus);
+    const featureIndex = deviceIndex === null ? 0 : await getFeatureIndex(bus, deviceIndex, 0x0020);
+    if (deviceIndex === null || !featureIndex) {
+      log("  no live device index, or no 0x0020 on this mouse.");
+      return;
+    }
+
+    const before = await bus.request(deviceIndex, featureIndex, 0x0, [], 1200);
+    log(`  before  fn 0x00: ${hexBytes(before.slice(3, 11))}`);
+
+    const written = await bus.request(deviceIndex, featureIndex, 0x1, ORIGINAL, 1200);
+    log(`  write   fn 0x01 [${ORIGINAL.map((b) => hex(b)).join(" ")}] replied: ${hexBytes(written.slice(3, 11))}`);
+
+    const after = await bus.request(deviceIndex, featureIndex, 0x0, [], 1200);
+    const readBack = hexBytes(after.slice(3, 11));
+    log(`  after   fn 0x00: ${readBack}`);
+    log("");
+
+    if (readBack.startsWith("12 DD")) {
+      log("  Confirmed: fn 0x01 sets the cookie, and the original value is restored.");
+    } else if (readBack === hexBytes(before.slice(3, 11))) {
+      log("  Unchanged — fn 0x01 is not the setter, and nothing here overwrote the cookie.");
+      log("  Something else zeroed it, which is worth knowing before blaming the walk.");
+    } else {
+      log("  It moved, but not to what was written. fn 0x01 takes a different shape;");
+      log("  do not write here again until the layout is understood.");
+    }
+  } finally {
+    await bus.close();
+  }
+}
+
 async function pick(filters: HIDDeviceFilter[]): Promise<void> {
   if (!navigator.hid) {
     log("WebHID is unavailable. Use Chrome or Edge on desktop over http://localhost.");
@@ -1177,7 +1368,11 @@ document.querySelector("#buttons")!.addEventListener("click", () => {
 });
 
 /** Both scan buttons run the same walk; only how far it goes differs. */
-function wireScanButton(selector: string, ceiling: number): void {
+function wireScanButton(
+  selector: string,
+  ceiling: number,
+  features?: ReadonlyArray<number>,
+): void {
   document.querySelector(selector)!.addEventListener("click", () => {
     void (async () => {
       if (!navigator.hid) return;
@@ -1188,13 +1383,40 @@ function wireScanButton(selector: string, ceiling: number): void {
         log("No authorized HID++ device yet — use “Pick a Logitech HID++ device” first.");
         return;
       }
-      await dumpUndocumented(device, ceiling);
+      await dumpUndocumented(device, ceiling, features);
     })().catch((error) => log(`Error: ${error}`));
   });
 }
 
 wireScanButton("#scan-safe", SAFE_FUNCTION_CEILING);
 wireScanButton("#scan-deep", DEEP_FUNCTION_CEILING);
+wireScanButton("#scan-unexplored", SAFE_FUNCTION_CEILING, UNEXPLORED_FEATURES);
+
+document.querySelector("#restore-cookie")!.addEventListener("click", () => {
+  void (async () => {
+    if (!navigator.hid) return;
+    const device = (await navigator.hid.getDevices()).find(hasHidppCollection);
+    resetLog();
+    if (!device) {
+      log("No authorized HID++ device yet.");
+      return;
+    }
+    await restoreConfigCookie(device);
+  })().catch((error) => log(`Error: ${error}`));
+});
+
+document.querySelector("#hosts")!.addEventListener("click", () => {
+  void (async () => {
+    if (!navigator.hid) return;
+    const device = (await navigator.hid.getDevices()).find(hasHidppCollection);
+    resetLog();
+    if (!device) {
+      log("No authorized HID++ device yet — use “Pick a Logitech HID++ device” first.");
+      return;
+    }
+    await dumpHosts(device);
+  })().catch((error) => log(`Error: ${error}`));
+});
 
 document.querySelector("#byte1")!.addEventListener("click", () => {
   void (async () => {
